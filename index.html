@@ -1050,4 +1050,571 @@
     if(!isFinite(curSec) || curSec <= 0){ ratio = 0; }
     else {
       const diff = Math.abs(curSec - tgtSec);
-      ratio = Math.max(0, 1 -
+      ratio = Math.max(0, 1 - diff / 60);
+    }
+    const offset = RING_CIRC * (1 - ratio);
+    els.ringFill.style.strokeDashoffset = offset;
+
+    const diff = curSec - tgtSec;
+    els.deltaBadge.classList.remove('slow','fast','even');
+    if(!isFinite(curSec) || curSec <= 0){
+      els.deltaBadge.textContent = '목표 대비 --';
+      els.deltaBadge.classList.add('even');
+      els.ringFill.style.stroke = 'var(--ink-dim)'; els.ringFill.style.color = 'var(--ink-dim)';
+    } else if(diff > 3){
+      els.deltaBadge.textContent = `목표보다 ${Math.round(diff)}초 느림`;
+      els.deltaBadge.classList.add('slow');
+      els.ringFill.style.stroke = 'var(--coral)'; els.ringFill.style.color = 'var(--coral)';
+    } else if(diff < -3){
+      els.deltaBadge.textContent = `목표보다 ${Math.round(-diff)}초 빠름`;
+      els.deltaBadge.classList.add('fast');
+      els.ringFill.style.stroke = 'var(--teal)'; els.ringFill.style.color = 'var(--teal)';
+    } else {
+      els.deltaBadge.textContent = '목표 페이스 유지 중';
+      els.deltaBadge.classList.add('even');
+      els.ringFill.style.stroke = 'var(--teal)'; els.ringFill.style.color = 'var(--teal)';
+    }
+  }
+
+  function evaluatePaceAndMaybeSpeak(curSec){
+    const tgt = currentTargetPaceSec();
+    updateRing(curSec, tgt);
+    maybeAnnounceSegmentChange();
+    if(!isFinite(curSec) || curSec <= 0 || !isFinite(tgt)) return;
+
+    const now = Date.now();
+    if(now - lastVoiceAt < VOICE_MIN_GAP_MS) return;
+
+    const diff = curSec - tgt;
+    if(diff >= PACE_SLOW_THRESHOLD_S){
+      speak('페이스가 목표보다 느립니다. 조금 더 올려보세요.');
+      lastVoiceAt = now;
+    } else if(diff <= -PACE_FAST_THRESHOLD_S){
+      speak('목표보다 빠릅니다. 페이스를 살짝 낮춰도 좋아요.');
+      lastVoiceAt = now;
+    }
+  }
+
+  function evaluateSlope(){
+    if(altBuffer.length < 2) return;
+    const last = altBuffer[altBuffer.length - 1];
+    let ref = altBuffer[0];
+    for(let i = altBuffer.length - 1; i >= 0; i--){
+      if(last.distM - altBuffer[i].distM >= SLOPE_WINDOW_M){ ref = altBuffer[i]; break; }
+      ref = altBuffer[i];
+    }
+    const distDelta = last.distM - ref.distM;
+    if(distDelta < SLOPE_MIN_DIST_M) return;
+
+    const altDelta = last.alt - ref.alt;
+    if(altDelta == null || isNaN(altDelta)) return;
+    const grade = altDelta / distDelta;
+
+    let newState = 'flat';
+    if(grade >= SLOPE_GRADE_THRESHOLD) newState = 'up';
+    else if(grade <= -SLOPE_GRADE_THRESHOLD) newState = 'down';
+
+    if(newState !== slopeState){
+      slopeState = newState;
+      if(newState === 'up'){
+        els.slopeBadge.textContent = '▲ 오르막 구간 감지';
+        els.slopeBadge.classList.add('show');
+        speak('오르막 구간입니다. 페이스보다 힘 조절에 집중하세요.');
+        addLog('오르막 구간 진입 (경사 약 ' + (grade*100).toFixed(1) + '%)', 'slope');
+      } else if(newState === 'down'){
+        els.slopeBadge.textContent = '▼ 내리막 구간 감지';
+        els.slopeBadge.classList.add('show');
+        speak('내리막 구간입니다. 무릎에 무리가 가지 않게 보폭을 조절하세요.');
+        addLog('내리막 구간 진입 (경사 약 ' + (grade*100).toFixed(1) + '%)', 'slope');
+      } else {
+        els.slopeBadge.classList.remove('show');
+        addLog('평지 구간으로 복귀', 'slope');
+      }
+    }
+  }
+
+  function onPosition(pos){
+    const { latitude, longitude, altitude, accuracy } = pos.coords;
+    const t = pos.timestamp;
+
+    els.gpsStatus.classList.add('live');
+
+    if(accuracy != null && accuracy > ACCURACY_REJECT_M){
+      poorSignalStreak++;
+      els.gpsStatusText.textContent = `GPS 신호 약함 (±${Math.round(accuracy)}m)`;
+      els.gpsStatus.classList.remove('live');
+      if(poorSignalStreak === 1 || poorSignalStreak % 10 === 0){
+        addLog(`GPS 신호가 약해 이번 측정값(±${Math.round(accuracy)}m)은 건너뜁니다.`, 'slope');
+      }
+      return;
+    }
+    poorSignalStreak = 0;
+    els.gpsStatusText.textContent = accuracy > ACCURACY_WARN_M
+      ? `GPS 정확도 ±${Math.round(accuracy)}m (약함)`
+      : `GPS 정확도 ±${Math.round(accuracy || 0)}m`;
+
+    if(lastPos){
+      const d = haversine(lastPos.lat, lastPos.lon, latitude, longitude);
+      const dt = (t - lastPos.t) / 1000;
+      if(dt > 0 && d / dt < 8){
+        totalDistanceM += d;
+        recentPoints.push({ t, distM: totalDistanceM });
+        const cutoff = t - 20000;
+        recentPoints = recentPoints.filter(p => p.t >= cutoff);
+
+        const altAcc = pos.coords.altitudeAccuracy;
+        const altTrustworthy = altitude != null && (altAcc == null || altAcc <= ALT_ACCURACY_REJECT_M);
+        if(altTrustworthy){
+          altBuffer.push({ distM: totalDistanceM, alt: altitude });
+          if(altBuffer.length > 200) altBuffer.shift();
+          evaluateSlope();
+        }
+      }
+    }
+    lastPos = { lat: latitude, lon: longitude, alt: altitude, t };
+    updateMap(latitude, longitude);
+
+    let curPaceSec = NaN;
+    if(recentPoints.length >= 2){
+      const first = recentPoints[0];
+      const last = recentPoints[recentPoints.length - 1];
+      const dm = last.distM - first.distM;
+      const dtSec = (last.t - first.t) / 1000;
+      if(dm > 3 && dtSec > 0){
+        curPaceSec = (dtSec / dm) * 1000;
+      }
+    }
+    els.curPace.textContent = fmtPace(curPaceSec);
+    evaluatePaceAndMaybeSpeak(curPaceSec);
+
+    const km = totalDistanceM / 1000;
+    if(Math.floor(km) > lastKmAnnounced){
+      lastKmAnnounced = Math.floor(km);
+      const elapsedSec = (Date.now() - startTime) / 1000;
+      const avgPace = elapsedSec / km;
+
+      const now = Date.now();
+      const splitSec = kmSplitStartTime ? (now - kmSplitStartTime) / 1000 : null;
+      kmSplitStartTime = now;
+      if(splitSec != null){
+        sessionSplits.push({ km: lastKmAnnounced, sec: splitSec });
+        const segments = loadSegmentPR();
+        const key = String(lastKmAnnounced);
+        const prevPR = segments[key];
+        if(prevPR == null){
+          segments[key] = splitSec;
+          saveSegmentPR(segments);
+          updateSegmentNote();
+          addLog(`${lastKmAnnounced}km 구간 기록 최초 저장: ${fmtPace(splitSec)}`, 'voice');
+        } else if(splitSec < prevPR){
+          const diff = prevPR - splitSec;
+          segments[key] = splitSec;
+          saveSegmentPR(segments);
+          updateSegmentNote();
+          speak(`${lastKmAnnounced}킬로미터 구간 신기록입니다! 이전보다 ${Math.round(diff)}초 빨라요.`);
+          addLog(`🏆 ${lastKmAnnounced}km 구간 신기록 (${fmtPace(splitSec)}, 이전보다 ${Math.round(diff)}초 단축)`, 'voice');
+        } else {
+          const diff = splitSec - prevPR;
+          speak(`${lastKmAnnounced}킬로미터 구간, 최고기록보다 ${Math.round(diff)}초 느립니다.`);
+          addLog(`${lastKmAnnounced}km 구간 (${fmtPace(splitSec)}, 최고기록보다 ${Math.round(diff)}초 느림)`, 'slope');
+        }
+      }
+
+      speak(`${lastKmAnnounced}킬로미터 통과. 평균 페이스 ${fmtPace(avgPace)}.`);
+    }
+
+    els.statDist.textContent = (totalDistanceM/1000).toFixed(2) + ' km';
+  }
+
+  function onPositionError(err){
+    els.gpsStatus.classList.remove('live');
+    els.gpsStatusText.textContent = 'GPS 오류: ' + err.message;
+    addLog('GPS 오류 — ' + err.message, 'slope');
+  }
+
+  function tick(){
+    if(!running) return;
+    const elapsedSec = (Date.now() - startTime) / 1000;
+    els.statTime.textContent = fmtTime(elapsedSec);
+    const km = totalDistanceM / 1000;
+    if(km > 0.01){
+      els.statAvg.textContent = fmtPace(elapsedSec / km);
+    }
+  }
+
+  function dateOnly(iso){ return iso.slice(0,10); }
+
+  function computeStreak(list){
+    if(!list.length) return 0;
+    const days = [...new Set(list.map(s => dateOnly(s.date)))].sort().reverse();
+    let streak = 0;
+    let cursor = new Date();
+    for(let i=0;i<days.length;i++){
+      const expected = new Date(cursor); expected.setDate(expected.getDate() - streak);
+      const expectedStr = expected.toISOString().slice(0,10);
+      if(days[i] === expectedStr){ streak++; }
+      else if(i===0 && days[i] !== new Date().toISOString().slice(0,10)) { break; }
+      else break;
+    }
+    return streak;
+  }
+
+  function renderHistory(){
+    const list = loadHistory();
+    els.totalRunsStat.textContent = list.length;
+    els.streakStat.textContent = computeStreak(list);
+    const weekAgo = Date.now() - 7*24*60*60*1000;
+    const weekDist = list.filter(s => new Date(s.date).getTime() >= weekAgo)
+      .reduce((sum,s) => sum + s.distKm, 0);
+    els.weekDistStat.textContent = weekDist.toFixed(1);
+
+    if(!list.length){
+      els.historyList.innerHTML = '<div class="empty-hint">아직 기록이 없어요.<br>첫 러닝을 시작해보세요!</div>';
+      return;
+    }
+    els.historyList.innerHTML = list.map(s => {
+      const d = new Date(s.date);
+      const dstr = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+      return `<div class="history-item"><div><div class="m">${s.distKm.toFixed(2)}km · ${fmtTime(s.timeSec)}</div><div class="d">${dstr} · ${s.modeLabel||''}</div></div><div class="m" style="color:var(--teal)">${fmtPace(s.avgPaceSec)}/km</div></div>`;
+    }).join('');
+  }
+
+  function showSummary(session){
+    els.sumDist.textContent = session.distKm.toFixed(2);
+    els.sumTime.textContent = fmtTime(session.timeSec);
+    els.sumPace.textContent = fmtPace(session.avgPaceSec) + '/km';
+
+    els.splitChart.innerHTML = '';
+    if(session.splits && session.splits.length){
+      const paces = session.splits.map(s => s.sec);
+      const minPace = Math.min(...paces), maxPace = Math.max(...paces);
+      session.splits.forEach(sp => {
+        const range = (maxPace - minPace) || 1;
+        const heightPct = 30 + (1 - (sp.sec - minPace)/range) * 70;
+        const bar = document.createElement('div');
+        bar.className = 'split-bar';
+        bar.style.height = heightPct + '%';
+        bar.innerHTML = `<span class="lbl">${sp.km}km</span>`;
+        els.splitChart.appendChild(bar);
+      });
+    } else {
+      els.splitChart.innerHTML = '<div class="empty-hint" style="padding:20px;">1km 미만 러닝은 구간 차트가 표시되지 않아요.</div>';
+    }
+
+    els.shareCanvas.style.display = 'none';
+    els.summaryOverlay.classList.add('show');
+  }
+
+  function closeSummary(){ els.summaryOverlay.classList.remove('show'); }
+
+  function generateShareCard(session){
+    const c = els.shareCanvas;
+    const ctx = c.getContext('2d');
+    const W = c.width, H = c.height;
+
+    const grad = ctx.createLinearGradient(0,0,0,H);
+    grad.addColorStop(0, '#0A0E16');
+    grad.addColorStop(1, '#10151F');
+    ctx.fillStyle = grad; ctx.fillRect(0,0,W,H);
+
+    ctx.fillStyle = 'rgba(45,212,191,0.15)';
+    ctx.beginPath(); ctx.arc(W*0.1, H*0.05, 220, 0, Math.PI*2); ctx.fill();
+
+    ctx.fillStyle = '#7C879B';
+    ctx.font = '24px sans-serif';
+    ctx.fillText('준썰 · 러닝 프로토타입', 50, 90);
+
+    ctx.fillStyle = '#2DD4BF';
+    ctx.font = 'bold 56px sans-serif';
+    ctx.fillText('PACER', 50, 160);
+
+    const d = new Date(session.date);
+    ctx.fillStyle = '#7C879B';
+    ctx.font = '22px sans-serif';
+    ctx.fillText(`${d.getFullYear()}.${d.getMonth()+1}.${d.getDate()} 러닝 기록`, 50, 220);
+
+    function stat(label, value, y, color){
+      ctx.fillStyle = '#7C879B';
+      ctx.font = '20px sans-serif';
+      ctx.fillText(label, 50, y);
+      ctx.fillStyle = color;
+      ctx.font = 'bold 72px sans-serif';
+      ctx.fillText(value, 50, y+70);
+    }
+    stat('거리', session.distKm.toFixed(2) + ' km', 320, '#22D3EE');
+    stat('시간', fmtTime(session.timeSec), 470, '#A78BFA');
+    stat('평균 페이스', fmtPace(session.avgPaceSec) + ' /km', 620, '#2DD4BF');
+
+    ctx.strokeStyle = '#212B3B';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(50, H-60); ctx.lineTo(W-50, H-60); ctx.stroke();
+    ctx.fillStyle = '#7C879B';
+    ctx.font = '18px sans-serif';
+    ctx.fillText('#러닝스타그램  #PACER  #러닝글라스', 50, H-25);
+
+    c.style.display = 'block';
+  }
+
+  async function shareOrDownloadCard(){
+    els.shareCanvas.toBlob(async (blob) => {
+      const file = new File([blob], 'pacer-run.png', { type: 'image/png' });
+      if(navigator.share && navigator.canShare && navigator.canShare({ files:[file] })){
+        try {
+          await navigator.share({ files:[file], title:'PACER 러닝 기록' });
+          return;
+        } catch(e){ }
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'pacer-run.png';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 3000);
+    }, 'image/png');
+  }
+
+  async function requestMotionPermission(){
+    if(typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function'){
+      try {
+        const res = await DeviceMotionEvent.requestPermission();
+        motionPermGranted = (res === 'granted');
+      } catch(e){ motionPermGranted = false; }
+    } else {
+      motionPermGranted = true;
+    }
+    if(motionPermGranted){
+      window.addEventListener('devicemotion', onDeviceMotion);
+      addLog('동작 센서 권한이 허용됐습니다. 케이던스/낙상감지 사용 가능.');
+    } else {
+      addLog('동작 센서 권한이 거부됐습니다. 케이던스/낙상감지를 쓸 수 없어요.', 'slope');
+    }
+    return motionPermGranted;
+  }
+
+  function onDeviceMotion(e){
+    const acc = e.accelerationIncludingGravity || e.acceleration;
+    if(!acc || acc.x == null) return;
+    const mag = Math.sqrt((acc.x||0)**2 + (acc.y||0)**2 + (acc.z||0)**2);
+    const now = Date.now();
+
+    if(running && cadenceEnabled){
+      const delta = mag - lastAccelMag;
+      if(delta > 3 && (now - lastStepPeakTime) > 250){
+        lastStepPeakTime = now;
+        stepTimestamps.push(now);
+        stepTimestamps = stepTimestamps.filter(t => now - t <= 8000);
+        if(stepTimestamps.length >= 4){
+          currentCadenceSpm = Math.round((stepTimestamps.length / 8) * 60);
+          els.statCadence.textContent = currentCadenceSpm + ' spm';
+          if(currentCadenceSpm < CADENCE_TARGET_MIN && now - lastCadenceVoiceAt > 25000){
+            lastCadenceVoiceAt = now;
+            speak('케이던스가 낮아요. 보폭을 좁히고 더 빠르게 디뎌보세요.');
+          }
+        }
+      }
+    }
+
+    if(fallDetectEnabled && !els.sosOverlay.classList.contains('show')){
+      if(mag > IMPACT_THRESHOLD){
+        impactDetectedAt = now;
+        stillnessStart = 0;
+      }
+      if(impactDetectedAt && now - impactDetectedAt < 6000){
+        if(Math.abs(mag - 9.8) < STILLNESS_THRESHOLD){
+          if(!stillnessStart) stillnessStart = now;
+          else if(now - stillnessStart > STILLNESS_REQUIRED_MS){
+            impactDetectedAt = 0; stillnessStart = 0;
+            triggerSOS();
+          }
+        } else {
+          stillnessStart = 0;
+        }
+      }
+    }
+    lastAccelMag = mag;
+  }
+
+  function triggerSOS(){
+    sosCountdownSec = 15;
+    els.sosCountdown.textContent = sosCountdownSec;
+    els.sosOverlay.classList.add('show');
+    speak('충격이 감지됐습니다. 괜찮으시면 취소를 눌러주세요.');
+    sosTimerId = setInterval(() => {
+      sosCountdownSec--;
+      els.sosCountdown.textContent = sosCountdownSec;
+      if(sosCountdownSec <= 0){
+        clearInterval(sosTimerId);
+        sendSOS();
+      }
+    }, 1000);
+  }
+
+  function cancelSOS(){
+    if(sosTimerId) clearInterval(sosTimerId);
+    els.sosOverlay.classList.remove('show');
+    addLog('SOS 취소됨 — 안전 확인.');
+  }
+
+  function sendSOS(){
+    els.sosOverlay.classList.remove('show');
+    const contact = loadEmergencyContact();
+    let mapsLink = '위치 정보 없음';
+    if(lastPos){
+      mapsLink = `https://maps.google.com/?q=${lastPos.lat},${lastPos.lon}`;
+    }
+    const msg = encodeURIComponent(`[PACER 안전알림] 러닝 중 충격이 감지된 후 응답이 없습니다. 현재 위치: ${mapsLink}`);
+    addLog('🚨 SOS 발동 — 문자 앱을 엽니다. 전송을 눌러 완료해주세요.', 'slope');
+    const smsUri = contact ? `sms:${contact}?body=${msg}` : `sms:?body=${msg}`;
+    window.location.href = smsUri;
+  }
+
+  function start(){
+    if(!('geolocation' in navigator)){
+      addLog('이 브라우저는 위치 정보를 지원하지 않습니다.', 'slope');
+      return;
+    }
+    running = true;
+    startTime = Date.now();
+    kmSplitStartTime = startTime;
+    totalDistanceM = 0; lastPos = null; recentPoints = []; altBuffer = [];
+    lastKmAnnounced = 0; slopeState = 'flat'; lastVoiceAt = 0; poorSignalStreak = 0; lastSegment = null;
+    sessionSplits = []; stepTimestamps = []; currentCadenceSpm = null; lastCadenceVoiceAt = 0;
+    els.statCadence.textContent = '-- spm';
+    els.slopeBadge.classList.remove('show');
+    els.segmentBadge.classList.remove('show');
+    resetMap();
+    els.toggleBtn.textContent = '러닝 종료';
+    els.toggleBtn.classList.add('running');
+    els.permNote.style.display = 'none';
+
+    if(currentMode === 'interval'){
+      startIntervalTimer();
+    } else {
+      const startTgt = currentTargetPaceSec();
+      const modeLabel = currentMode === 'goal' ? `목표 완주 모드(${els.goalDist.value}km, ${LEVEL_CURVES[currentLevel] ? {beginner:'초급',intermediate:'중급',advanced:'고급'}[currentLevel] : ''})` : '페이스 훈련 모드';
+      addLog(`러닝 시작 — ${modeLabel}, 목표 페이스 ${fmtPace(startTgt)}`);
+      speak('러닝을 시작합니다. 목표 페이스는 ' + fmtPace(startTgt) + '입니다.');
+    }
+
+    watchId = navigator.geolocation.watchPosition(onPosition, onPositionError, {
+      enableHighAccuracy: true, maximumAge: 1000, timeout: 15000
+    });
+    timerInterval = setInterval(tick, 1000);
+  }
+
+  function stop(){
+    running = false;
+    if(watchId != null) navigator.geolocation.clearWatch(watchId);
+    if(timerInterval) clearInterval(timerInterval);
+    stopIntervalTimer();
+    els.toggleBtn.textContent = '러닝 시작';
+    els.toggleBtn.classList.remove('running');
+    els.gpsStatus.classList.remove('live');
+    els.gpsStatusText.textContent = 'GPS 대기';
+    const elapsedSec = (Date.now() - startTime) / 1000;
+    const km = totalDistanceM/1000;
+    addLog(`러닝 종료 — 총 ${km.toFixed(2)}km, ${fmtTime(elapsedSec)}`);
+    speak('러닝을 종료합니다. 수고하셨습니다.');
+
+    if(km >= 0.05){
+      const modeLabelMap = { training:'페이스 훈련', goal:'목표 완주', interval:'인터벌' };
+      const session = {
+        date: new Date().toISOString(),
+        distKm: km,
+        timeSec: elapsedSec,
+        avgPaceSec: km > 0 ? elapsedSec / km : 0,
+        splits: sessionSplits.slice(),
+        modeLabel: modeLabelMap[currentMode] || ''
+      };
+      addHistorySession(session);
+      renderHistory();
+      showSummary(session);
+    }
+  }
+
+  els.toggleBtn.addEventListener('click', () => running ? stop() : start());
+  els.testVoiceBtn.addEventListener('click', () => speak('음성 코칭 테스트입니다. 블루투스 스피커로 잘 들리시나요?'));
+
+  els.tabTraining.addEventListener('click', () => setMode('training'));
+  els.tabGoal.addEventListener('click', () => setMode('goal'));
+  els.tabInterval.addEventListener('click', () => setMode('interval'));
+  [...els.levelGroup.children].forEach(btn => {
+    btn.addEventListener('click', () => setLevel(btn.dataset.level));
+  });
+  [els.goalDist, els.goalMin, els.goalSec].forEach(input => {
+    input.addEventListener('input', updateGoalDerived);
+  });
+  els.resetSegmentsBtn.addEventListener('click', () => {
+    if(confirm('저장된 모든 구간 최고기록을 삭제할까요?')){
+      saveSegmentPR({});
+      updateSegmentNote();
+      addLog('구간 기록을 초기화했습니다.');
+    }
+  });
+
+  els.voiceSelect.addEventListener('change', () => {
+    const uri = els.voiceSelect.value;
+    localStorage.setItem(SELECTED_VOICE_KEY, uri);
+    const voices = window.speechSynthesis.getVoices();
+    selectedVoice = voices.find(v => v.voiceURI === uri) || null;
+    speak('이 목소리로 안내해드릴게요.');
+  });
+  els.voiceRate.value = voiceRate;
+  els.rateLabel.textContent = voiceRate.toFixed(2) + 'x';
+  els.voiceRate.addEventListener('input', () => {
+    voiceRate = parseFloat(els.voiceRate.value);
+    els.rateLabel.textContent = voiceRate.toFixed(2) + 'x';
+    localStorage.setItem('pacer_voice_rate', voiceRate);
+  });
+  els.voicePitch.value = voicePitch;
+  els.pitchLabel.textContent = voicePitch.toFixed(2);
+  els.voicePitch.addEventListener('input', () => {
+    voicePitch = parseFloat(els.voicePitch.value);
+    els.pitchLabel.textContent = voicePitch.toFixed(2);
+    localStorage.setItem('pacer_voice_pitch', voicePitch);
+  });
+  els.voiceRate.addEventListener('change', () => speak('이 속도로 안내해드릴게요.'));
+  els.voicePitch.addEventListener('change', () => speak('이 음높이로 안내해드릴게요.'));
+
+  els.historyBtn.addEventListener('click', () => { renderHistory(); els.historyOverlay.classList.add('show'); });
+  els.closeHistoryBtn.addEventListener('click', () => els.historyOverlay.classList.remove('show'));
+
+  els.closeSummaryBtn.addEventListener('click', closeSummary);
+  els.closeSummaryBtn2.addEventListener('click', closeSummary);
+  els.makeShareCardBtn.addEventListener('click', () => {
+    const list = loadHistory();
+    if(!list.length) return;
+    generateShareCard(list[0]);
+    shareOrDownloadCard();
+  });
+
+  els.emergencyContact.value = loadEmergencyContact();
+  els.emergencyContact.addEventListener('input', () => saveEmergencyContact(els.emergencyContact.value));
+
+  fallDetectEnabled = loadToggle('pacer_fall_detect', false);
+  cadenceEnabled = loadToggle('pacer_cadence', true);
+  els.fallDetectToggle.checked = fallDetectEnabled;
+  els.cadenceToggle.checked = cadenceEnabled;
+  els.fallDetectToggle.addEventListener('change', () => {
+    fallDetectEnabled = els.fallDetectToggle.checked;
+    saveToggle('pacer_fall_detect', fallDetectEnabled);
+    if(fallDetectEnabled && !motionPermGranted) requestMotionPermission();
+  });
+  els.cadenceToggle.addEventListener('change', () => {
+    cadenceEnabled = els.cadenceToggle.checked;
+    saveToggle('pacer_cadence', cadenceEnabled);
+    if(cadenceEnabled && !motionPermGranted) requestMotionPermission();
+  });
+  els.motionPermBtn.addEventListener('click', requestMotionPermission);
+  els.sosCancelBtn.addEventListener('click', cancelSOS);
+
+  if(typeof DeviceMotionEvent === 'undefined' || typeof DeviceMotionEvent.requestPermission !== 'function'){
+    if(cadenceEnabled || fallDetectEnabled) requestMotionPermission();
+  }
+
+  renderHistory();
+  updateSegmentNote();
+  updateRing(NaN, currentTargetPaceSec());
+})();
+</script>
+</body>
+</html>
