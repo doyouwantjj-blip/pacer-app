@@ -13,9 +13,9 @@
     --contour: #1A2230;
     --ink: #F2F4F8;
     --ink-dim: #7C879B;
-    --teal: #2DD4BF;      /* 목표 페이스 유지 */
-    --coral: #FF6B4A;     /* 페이스 이탈 경고 */
-    --amber: #F2B84B;     /* 경사 안내 */
+    --teal: #2DD4BF;
+    --coral: #FF6B4A;
+    --amber: #F2B84B;
     --line: #212B3B;
   }
   *{ box-sizing: border-box; margin:0; padding:0; -webkit-tap-highlight-color: transparent; }
@@ -76,7 +76,6 @@
     gap:16px;
   }
 
-  /* 페이스 링 (스톱워치 베젤) */
   .ring-wrap{ position:relative; width:min(58vw, 220px); aspect-ratio:1; flex-shrink:0; }
   svg.ring{ width:100%; height:100%; transform:rotate(-90deg); }
   .ring-track{ fill:none; stroke: var(--line); stroke-width:10; }
@@ -123,6 +122,50 @@
   }
   .target-row input:focus{ outline:none; border-color: var(--teal); }
   .target-row .sep{ color:var(--ink-dim); font-family:'IBM Plex Mono', monospace; }
+
+  .mode-tabs{
+    width:100%; max-width:420px;
+    display:flex; gap:6px;
+    background: var(--bg-elevated); border:1px solid var(--line); border-radius:12px;
+    padding:4px;
+  }
+  .mode-tabs button{
+    flex:1; padding:9px 8px; border-radius:9px; border:none; background:transparent;
+    color: var(--ink-dim); font-family:'IBM Plex Sans KR', sans-serif; font-size:13px; font-weight:600;
+  }
+  .mode-tabs button.active{ background: var(--line); color: var(--ink); }
+
+  .goal-panel{
+    width:100%; max-width:420px;
+    background: var(--bg-elevated); border:1px solid var(--line); border-radius:14px;
+    padding:14px 16px;
+    display:flex; flex-direction:column; gap:12px;
+  }
+  .goal-row{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .goal-row .pace-input input{
+    width:44px; background:transparent; border:none; color:var(--ink);
+    font-family:'IBM Plex Mono', monospace; font-size:18px; font-weight:600; text-align:center;
+    border-bottom:1px solid var(--line); padding-bottom:2px;
+  }
+  .goal-row .pace-input input:focus{ outline:none; border-color: var(--teal); }
+  .goal-row .sep{ color:var(--ink-dim); font-family:'IBM Plex Mono', monospace; }
+  .level-group{ display:flex; gap:6px; }
+  .level-group button{
+    flex:1; padding:9px 4px; border-radius:9px; border:1px solid var(--line); background:transparent;
+    color: var(--ink-dim); font-family:'IBM Plex Sans KR', sans-serif; font-size:12px; font-weight:600;
+  }
+  .level-group button.active{ background: var(--teal); border-color: var(--teal); color:#04211D; }
+  .goal-derived{
+    font-family:'IBM Plex Mono', monospace; font-size:12px; color: var(--ink-dim);
+    border-top:1px dashed var(--line); padding-top:10px;
+  }
+  .goal-derived b{ color: var(--ink); }
+  .segment-badge{
+    display:inline-flex; align-items:center; gap:6px;
+    font-family:'IBM Plex Mono', monospace; font-size:11px; color: var(--teal);
+    border:1px solid rgba(45,212,191,.3); background: rgba(45,212,191,.06);
+    padding:4px 10px; border-radius:99px; margin-top:4px;
+  }
 
   .log{
     width:100%; max-width:420px; flex:1;
@@ -188,7 +231,12 @@
 
   <div class="slope-badge" id="slopeBadge">▲ 오르막 구간 감지</div>
 
-  <div class="target-row">
+  <div class="mode-tabs">
+    <button id="tabTraining" class="active">페이스 훈련 모드</button>
+    <button id="tabGoal">목표 완주 모드</button>
+  </div>
+
+  <div class="target-row" id="trainingPanel">
     <div>
       <div class="eyebrow">목표 페이스</div>
       <div style="font-size:12px; color:var(--ink-dim)">km당 도달 시간</div>
@@ -199,6 +247,39 @@
       <input type="number" id="targetSec" value="0" min="0" max="59">
     </div>
   </div>
+
+  <div class="goal-panel" id="goalPanel" style="display:none;">
+    <div class="goal-row">
+      <div>
+        <div class="eyebrow">목표 거리</div>
+      </div>
+      <div class="pace-input">
+        <input type="number" id="goalDist" value="5" min="1" max="42" step="0.5">
+        <span class="sep">km</span>
+      </div>
+    </div>
+    <div class="goal-row">
+      <div>
+        <div class="eyebrow">목표 시간</div>
+      </div>
+      <div class="pace-input">
+        <input type="number" id="goalMin" value="40" min="1" max="300">
+        <span class="sep">:</span>
+        <input type="number" id="goalSec" value="0" min="0" max="59">
+      </div>
+    </div>
+    <div>
+      <div class="eyebrow" style="margin-bottom:8px;">러너 레벨 (평지 기준 페이스 곡선)</div>
+      <div class="level-group" id="levelGroup">
+        <button data-level="beginner">초급</button>
+        <button data-level="intermediate" class="active">중급</button>
+        <button data-level="advanced">고급</button>
+      </div>
+    </div>
+    <div class="goal-derived" id="goalDerived">평균 페이스 <b>--:--</b>/km · 초반 <b>--:--</b> · 후반 <b>--:--</b></div>
+  </div>
+
+  <div class="slope-badge" id="segmentBadge" style="border-color:rgba(45,212,191,.3); background:rgba(45,212,191,.06); color:var(--teal);">초반 구간 · 여유 있게</div>
 
   <div class="stat-grid">
     <div class="stat"><div class="eyebrow">거리</div><div class="val" id="statDist">0.00 km</div></div>
@@ -222,12 +303,34 @@
   const els = {
     gpsStatus: $('gpsStatus'), gpsStatusText: $('gpsStatusText'),
     curPace: $('curPace'), deltaBadge: $('deltaBadge'), ringFill: $('ringFill'),
-    slopeBadge: $('slopeBadge'),
+    slopeBadge: $('slopeBadge'), segmentBadge: $('segmentBadge'),
+    tabTraining: $('tabTraining'), tabGoal: $('tabGoal'),
+    trainingPanel: $('trainingPanel'), goalPanel: $('goalPanel'),
     targetMin: $('targetMin'), targetSec: $('targetSec'),
+    goalDist: $('goalDist'), goalMin: $('goalMin'), goalSec: $('goalSec'),
+    levelGroup: $('levelGroup'), goalDerived: $('goalDerived'),
     statDist: $('statDist'), statTime: $('statTime'), statAvg: $('statAvg'),
     log: $('log'), toggleBtn: $('toggleBtn'), testVoiceBtn: $('testVoiceBtn'),
     permNote: $('permNote')
   };
+
+  const LEVEL_CURVES = {
+    beginner: {
+      start: 8, mid: 0, end: -8,
+      labels: { start: '초반 구간 · 여유 있게 시작하세요', mid: '중반 구간 · 목표 페이스 유지', end: '후반 구간 · 컨디션 되면 살짝 당겨보세요' }
+    },
+    intermediate: {
+      start: 0, mid: 0, end: 0,
+      labels: { start: '균등 페이스 구간', mid: '균등 페이스 구간', end: '균등 페이스 구간 · 끝까지 유지' }
+    },
+    advanced: {
+      start: 3, mid: 0, end: -3,
+      labels: { start: '초반 구간 · 절제된 페이스', mid: '중반 구간 · 목표 페이스 유지', end: '후반 구간 · 네거티브 스플릿 스퍼트' }
+    }
+  };
+  let currentMode = 'training';
+  let currentLevel = 'intermediate';
+  let lastSegment = null;
 
   const RING_CIRC = 2 * Math.PI * 88;
 
@@ -250,6 +353,9 @@
   const PACE_FAST_THRESHOLD_S = 12;
   const SLOPE_GRADE_THRESHOLD = 0.03;
   const SLOPE_WINDOW_M = 40;
+  const ACCURACY_REJECT_M = 25;
+  const ACCURACY_WARN_M = 15;
+  let poorSignalStreak = 0;
 
   function fmtPace(secPerKm){
     if(!isFinite(secPerKm) || secPerKm <= 0) return '--:--';
@@ -268,6 +374,81 @@
     const m = parseInt(els.targetMin.value || '6', 10);
     const s = parseInt(els.targetSec.value || '0', 10);
     return m * 60 + s;
+  }
+
+  function goalBasePaceSec(){
+    const dist = parseFloat(els.goalDist.value || '5');
+    const m = parseInt(els.goalMin.value || '40', 10);
+    const s = parseInt(els.goalSec.value || '0', 10);
+    if(!dist || dist <= 0) return NaN;
+    return (m * 60 + s) / dist;
+  }
+
+  function segmentByProgress(progress){
+    if(progress < 1/3) return 'start';
+    if(progress < 2/3) return 'mid';
+    return 'end';
+  }
+
+  function goalSegmentPaceSec(base, segment){
+    const curve = LEVEL_CURVES[currentLevel];
+    const pct = curve[segment] || 0;
+    return base * (1 + pct / 100);
+  }
+
+  function currentTargetPaceSec(){
+    if(currentMode === 'training'){
+      return targetPaceSec();
+    }
+    const base = goalBasePaceSec();
+    if(!isFinite(base)) return NaN;
+    const dist = parseFloat(els.goalDist.value || '5');
+    const progress = dist > 0 ? Math.min(1, (totalDistanceM/1000) / dist) : 0;
+    const segment = segmentByProgress(progress);
+    return goalSegmentPaceSec(base, segment);
+  }
+
+  function updateGoalDerived(){
+    const base = goalBasePaceSec();
+    if(!isFinite(base) || base <= 0){
+      els.goalDerived.innerHTML = '평균 페이스 <b>--:--</b>/km';
+      return;
+    }
+    const startP = goalSegmentPaceSec(base, 'start');
+    const endP = goalSegmentPaceSec(base, 'end');
+    els.goalDerived.innerHTML = `평균 페이스 <b>${fmtPace(base)}</b>/km · 초반 <b>${fmtPace(startP)}</b> · 후반 <b>${fmtPace(endP)}</b>`;
+  }
+
+  function setMode(mode){
+    currentMode = mode;
+    els.tabTraining.classList.toggle('active', mode === 'training');
+    els.tabGoal.classList.toggle('active', mode === 'goal');
+    els.trainingPanel.style.display = mode === 'training' ? 'flex' : 'none';
+    els.goalPanel.style.display = mode === 'goal' ? 'flex' : 'none';
+    lastSegment = null;
+    if(mode === 'goal') updateGoalDerived();
+  }
+
+  function setLevel(level){
+    currentLevel = level;
+    [...els.levelGroup.children].forEach(btn => btn.classList.toggle('active', btn.dataset.level === level));
+    updateGoalDerived();
+  }
+
+  function maybeAnnounceSegmentChange(){
+    if(currentMode !== 'goal' || !running) return;
+    const dist = parseFloat(els.goalDist.value || '5');
+    if(!dist || dist <= 0) return;
+    const progress = Math.min(1, (totalDistanceM/1000) / dist);
+    const segment = segmentByProgress(progress);
+    if(segment !== lastSegment){
+      lastSegment = segment;
+      const label = LEVEL_CURVES[currentLevel].labels[segment];
+      els.segmentBadge.textContent = label;
+      els.segmentBadge.classList.add('show');
+      speak(label.replace(/·/g, ','));
+      addLog(label, 'voice');
+    }
   }
 
   function haversine(lat1, lon1, lat2, lon2){
@@ -331,9 +512,10 @@
   }
 
   function evaluatePaceAndMaybeSpeak(curSec){
-    const tgt = targetPaceSec();
+    const tgt = currentTargetPaceSec();
     updateRing(curSec, tgt);
-    if(!isFinite(curSec) || curSec <= 0) return;
+    maybeAnnounceSegmentChange();
+    if(!isFinite(curSec) || curSec <= 0 || !isFinite(tgt)) return;
 
     const now = Date.now();
     if(now - lastVoiceAt < VOICE_MIN_GAP_MS) return;
@@ -391,7 +573,20 @@
     const t = pos.timestamp;
 
     els.gpsStatus.classList.add('live');
-    els.gpsStatusText.textContent = `GPS 정확도 ±${Math.round(accuracy || 0)}m`;
+
+    if(accuracy != null && accuracy > ACCURACY_REJECT_M){
+      poorSignalStreak++;
+      els.gpsStatusText.textContent = `GPS 신호 약함 (±${Math.round(accuracy)}m)`;
+      els.gpsStatus.classList.remove('live');
+      if(poorSignalStreak === 1 || poorSignalStreak % 10 === 0){
+        addLog(`GPS 신호가 약해 이번 측정값(±${Math.round(accuracy)}m)은 건너뜁니다.`, 'slope');
+      }
+      return;
+    }
+    poorSignalStreak = 0;
+    els.gpsStatusText.textContent = accuracy > ACCURACY_WARN_M
+      ? `GPS 정확도 ±${Math.round(accuracy)}m (약함)`
+      : `GPS 정확도 ±${Math.round(accuracy || 0)}m`;
 
     if(lastPos){
       const d = haversine(lastPos.lat, lastPos.lon, latitude, longitude);
@@ -459,13 +654,16 @@
     running = true;
     startTime = Date.now();
     totalDistanceM = 0; lastPos = null; recentPoints = []; altBuffer = [];
-    lastKmAnnounced = 0; slopeState = 'flat'; lastVoiceAt = 0;
+    lastKmAnnounced = 0; slopeState = 'flat'; lastVoiceAt = 0; poorSignalStreak = 0; lastSegment = null;
     els.slopeBadge.classList.remove('show');
+    els.segmentBadge.classList.remove('show');
     els.toggleBtn.textContent = '러닝 종료';
     els.toggleBtn.classList.add('running');
     els.permNote.style.display = 'none';
-    addLog('러닝 시작 — 목표 페이스 ' + fmtPace(targetPaceSec()));
-    speak('러닝을 시작합니다. 목표 페이스는 ' + fmtPace(targetPaceSec()) + '입니다.');
+    const startTgt = currentTargetPaceSec();
+    const modeLabel = currentMode === 'goal' ? `목표 완주 모드(${els.goalDist.value}km, ${{beginner:'초급',intermediate:'중급',advanced:'고급'}[currentLevel]})` : '페이스 훈련 모드';
+    addLog(`러닝 시작 — ${modeLabel}, 목표 페이스 ${fmtPace(startTgt)}`);
+    speak('러닝을 시작합니다. 목표 페이스는 ' + fmtPace(startTgt) + '입니다.');
 
     watchId = navigator.geolocation.watchPosition(onPosition, onPositionError, {
       enableHighAccuracy: true, maximumAge: 1000, timeout: 15000
@@ -490,7 +688,16 @@
   els.toggleBtn.addEventListener('click', () => running ? stop() : start());
   els.testVoiceBtn.addEventListener('click', () => speak('음성 코칭 테스트입니다. 블루투스 스피커로 잘 들리시나요?'));
 
-  updateRing(NaN, targetPaceSec());
+  els.tabTraining.addEventListener('click', () => setMode('training'));
+  els.tabGoal.addEventListener('click', () => setMode('goal'));
+  [...els.levelGroup.children].forEach(btn => {
+    btn.addEventListener('click', () => setLevel(btn.dataset.level));
+  });
+  [els.goalDist, els.goalMin, els.goalSec].forEach(input => {
+    input.addEventListener('input', updateGoalDerived);
+  });
+
+  updateRing(NaN, currentTargetPaceSec());
 })();
 </script>
 </body>
