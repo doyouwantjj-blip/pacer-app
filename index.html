@@ -1,1 +1,2221 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>페이서 · 러닝 페이스 코치</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root{
+    --bg: #0A0E16;
+    --bg-elevated: #10151F;
+    --contour: #1A2230;
+    --ink: #F2F4F8;
+    --ink-dim: #7C879B;
+    --teal: #2DD4BF;      /* 목표 페이스 유지 */
+    --cyan: #22D3EE;      /* 거리 · 지도 */
+    --violet: #A78BFA;    /* 시간 */
+    --coral: #FF6B4A;     /* 페이스 이탈 경고 */
+    --amber: #F2B84B;     /* 경사 안내 */
+    --line: #212B3B;
+  }
+  *{ box-sizing: border-box; margin:0; padding:0; -webkit-tap-highlight-color: transparent; }
+  html,body{ height:100%; }
+  body{
+    background:
+      radial-gradient(circle at 15% -10%, rgba(45,212,191,0.22), transparent 45%),
+      radial-gradient(circle at 100% 5%, rgba(167,139,250,0.16), transparent 42%),
+      radial-gradient(circle at 90% 60%, rgba(255,107,74,0.10), transparent 40%),
+      repeating-radial-gradient(circle at 50% 120%, transparent 0, transparent 38px, var(--contour) 39px, transparent 40px),
+      var(--bg);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans KR', sans-serif;
+    height: 100dvh;
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+  }
+  .eyebrow{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px;
+    letter-spacing:0.18em;
+    color: var(--ink-dim);
+    text-transform:uppercase;
+  }
+  header{
+    padding: 18px 20px 10px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    border-bottom:1px solid var(--line);
+    flex-shrink:0;
+  }
+  header .brand{ display:flex; flex-direction:column; gap:2px; }
+  header .brand b{
+    font-family:'Anton', sans-serif;
+    font-size:65px;
+    letter-spacing:0.02em;
+    display:inline-block;
+    transform: skewX(-9deg);
+    background: linear-gradient(90deg, var(--teal), var(--cyan) 55%, var(--violet));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    line-height:1;
+  }
+  .status-pill{
+    display:flex; align-items:center; gap:6px;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px;
+    color: var(--ink-dim);
+    border:1px solid var(--line);
+    padding:5px 10px;
+    border-radius:99px;
+  }
+  .status-pill .dot{ width:6px; height:6px; border-radius:50%; background: var(--ink-dim); transition: background .3s; }
+  .status-pill.live .dot{ background: var(--teal); box-shadow:0 0 8px var(--teal); }
 
+  main{
+    flex:1;
+    min-height:0;
+    overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+    display:flex; flex-direction:column; align-items:center;
+    padding: 16px 20px 12px;
+    gap:16px;
+  }
+
+  /* 페이스 링 (스톱워치 베젤) */
+  .ring-wrap{ position:relative; width:min(58vw, 220px); aspect-ratio:1; flex-shrink:0; }
+  .ring-wrap::before{
+    content:''; position:absolute; inset:-20px; border-radius:50%;
+    background: radial-gradient(circle, rgba(45,212,191,.18), transparent 70%);
+    filter: blur(6px);
+    z-index:-1;
+  }
+  svg.ring{ width:100%; height:100%; transform:rotate(-90deg); overflow:visible; }
+  .ring-track{ fill:none; stroke: var(--line); stroke-width:10; }
+  .ring-fill{
+    fill:none; stroke: var(--teal); stroke-width:10; stroke-linecap:round;
+    transition: stroke-dashoffset .6s ease, stroke .4s;
+    filter: drop-shadow(0 0 6px currentColor);
+  }
+  .ring-center{
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
+  }
+  .ring-center .label{ font-family:'IBM Plex Mono', monospace; font-size:11px; letter-spacing:.14em; color:var(--ink-dim); text-transform:uppercase; }
+  .ring-center .pace{ font-size:48px; line-height:1; }
+  .ring-center .pace #curPace{
+    font-family:'Anton', sans-serif; letter-spacing:.01em;
+    display:inline-block; transform: skewX(-8deg);
+  }
+  .ring-center .pace small{ font-size:17px; color:var(--ink-dim); margin-left:4px; font-family:'IBM Plex Mono', monospace; }
+  .ring-center .delta{ font-family:'IBM Plex Mono', monospace; font-size:12px; margin-top:5px; padding:3px 10px; border-radius:99px; border:1px solid var(--line); }
+  .delta.slow{ color: var(--coral); border-color: rgba(255,107,74,.35); }
+  .delta.fast{ color: var(--teal); border-color: rgba(45,212,191,.35); }
+  .delta.even{ color: var(--ink-dim); }
+
+  .slope-badge{
+    display:flex; align-items:center; gap:8px;
+    font-family:'IBM Plex Mono', monospace; font-size:12px; color:var(--amber);
+    border:1px solid rgba(242,184,75,.3); background: rgba(242,184,75,.06);
+    padding:7px 14px; border-radius:99px;
+    opacity:0; transform:translateY(-6px); transition: all .35s;
+  }
+  .slope-badge.show{ opacity:1; transform:translateY(0); box-shadow: 0 0 14px rgba(242,184,75,.25); }
+
+  .stat-grid{ width:100%; max-width:420px; display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .stat{
+    position:relative; background: var(--bg-elevated); border:1px solid var(--line); border-radius:14px;
+    padding:12px 10px; text-align:center; overflow:hidden;
+  }
+  .stat::before{
+    content:''; position:absolute; top:0; left:0; right:0; height:3px;
+    background: var(--accent, var(--teal));
+  }
+  .stat.c-cyan{ --accent: var(--cyan); }
+  .stat.c-violet{ --accent: var(--violet); }
+  .stat.c-teal{ --accent: var(--teal); }
+  .stat.c-amber{ --accent: var(--amber); }
+  .stat .eyebrow{ margin-bottom:6px; }
+  .stat .val{ font-family:'IBM Plex Mono', monospace; font-weight:600; font-size:18px; color: var(--accent, var(--ink)); }
+
+  .target-row{
+    width:100%; max-width:420px;
+    display:flex; align-items:center; justify-content:space-between;
+    background: var(--bg-elevated); border:1px solid var(--line); border-radius:14px;
+    padding:14px 16px;
+  }
+  .target-row .eyebrow{ margin-bottom:4px; }
+  .target-row .pace-input{
+    display:flex; align-items:center; gap:6px;
+  }
+  .target-row input{
+    width:46px; background:transparent; border:none; color:var(--ink);
+    font-family:'IBM Plex Mono', monospace; font-size:20px; font-weight:600; text-align:center;
+    border-bottom:1px solid var(--line); padding-bottom:2px;
+  }
+  .target-row input:focus{ outline:none; border-color: var(--teal); }
+  .target-row .sep{ color:var(--ink-dim); font-family:'IBM Plex Mono', monospace; }
+
+  .mode-tabs{
+    width:100%; max-width:420px;
+    display:flex; gap:6px;
+    background: var(--bg-elevated); border:1px solid var(--line); border-radius:12px;
+    padding:4px;
+  }
+  .mode-tabs button{
+    flex:1; padding:9px 8px; border-radius:9px; border:none; background:transparent;
+    color: var(--ink-dim); font-family:'IBM Plex Sans KR', sans-serif; font-size:13px; font-weight:600;
+  }
+  .mode-tabs button.active{
+    background: linear-gradient(90deg, rgba(45,212,191,.22), rgba(34,211,238,.18));
+    color: var(--ink);
+    box-shadow: inset 0 0 0 1px rgba(45,212,191,.35);
+  }
+
+  .goal-panel{
+    width:100%; max-width:420px;
+    background: var(--bg-elevated); border:1px solid var(--line); border-radius:14px;
+    padding:14px 16px;
+    display:flex; flex-direction:column; gap:12px;
+  }
+  .goal-row{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .goal-row .pace-input input{
+    width:44px; background:transparent; border:none; color:var(--ink);
+    font-family:'IBM Plex Mono', monospace; font-size:18px; font-weight:600; text-align:center;
+    border-bottom:1px solid var(--line); padding-bottom:2px;
+  }
+  .goal-row .pace-input input:focus{ outline:none; border-color: var(--teal); }
+  .goal-row .sep{ color:var(--ink-dim); font-family:'IBM Plex Mono', monospace; }
+  .level-group{ display:flex; gap:6px; }
+  .level-group button{
+    flex:1; padding:9px 4px; border-radius:9px; border:1px solid var(--line); background:transparent;
+    color: var(--ink-dim); font-family:'IBM Plex Sans KR', sans-serif; font-size:12px; font-weight:600;
+  }
+  .level-group button.active{
+    background: linear-gradient(90deg, var(--teal), var(--cyan));
+    border-color: transparent; color:#04211D;
+    box-shadow: 0 0 12px rgba(45,212,191,.45);
+  }
+  .goal-derived{
+    font-family:'IBM Plex Mono', monospace; font-size:12px; color: var(--ink-dim);
+    border-top:1px dashed var(--line); padding-top:10px;
+  }
+  .goal-derived b{ color: var(--ink); }
+  .segment-badge{
+    display:inline-flex; align-items:center; gap:6px;
+    font-family:'IBM Plex Mono', monospace; font-size:11px; color: var(--teal);
+    border:1px solid rgba(45,212,191,.3); background: rgba(45,212,191,.06);
+    padding:4px 10px; border-radius:99px; margin-top:4px;
+  }
+
+  .interval-panel{
+    width:100%; max-width:420px;
+    background: var(--bg-elevated); border:1px solid var(--line); border-radius:14px;
+    padding:14px 16px;
+    display:flex; flex-direction:column; gap:12px;
+  }
+  .interval-panel .goal-row{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .interval-panel .goal-row .pace-input input{
+    width:44px; background:transparent; border:none; color:var(--ink);
+    font-family:'IBM Plex Mono', monospace; font-size:18px; font-weight:600; text-align:center;
+    border-bottom:1px solid var(--line); padding-bottom:2px;
+  }
+  .interval-panel .goal-row .pace-input input:focus{ outline:none; border-color: var(--teal); }
+  .interval-panel .goal-row .sep{ color:var(--ink-dim); font-family:'IBM Plex Mono', monospace; }
+  .cycles-row{ display:flex; align-items:center; gap:10px; }
+  .cycles-row input{
+    width:44px; background:transparent; border:none; color:var(--ink);
+    font-family:'IBM Plex Mono', monospace; font-size:18px; font-weight:600; text-align:center;
+    border-bottom:1px solid var(--line); padding-bottom:2px;
+  }
+  .cycles-row input:focus{ outline:none; border-color: var(--teal); }
+  .unlimited-toggle{
+    display:flex; align-items:center; gap:8px; cursor:pointer;
+    font-family:'IBM Plex Sans KR', sans-serif; font-size:12px; color: var(--ink-dim);
+  }
+  .unlimited-toggle input{ accent-color: var(--teal); width:15px; height:15px; }
+
+  .interval-display{
+    width:100%; max-width:420px;
+    display:none;
+    flex-direction:column; align-items:center; gap:10px;
+    padding: 22px 20px;
+    border-radius:20px;
+    border:1px solid var(--line);
+    background: var(--bg-elevated);
+    transition: background .4s, border-color .4s;
+  }
+  .interval-display.phase-run{ background: linear-gradient(180deg, rgba(45,212,191,.14), var(--bg-elevated) 70%); border-color: rgba(45,212,191,.35); }
+  .interval-display.phase-walk{ background: linear-gradient(180deg, rgba(242,184,75,.14), var(--bg-elevated) 70%); border-color: rgba(242,184,75,.35); }
+  .interval-display .phase-label{
+    font-family:'IBM Plex Mono', monospace; font-size:13px; letter-spacing:.16em; text-transform:uppercase;
+  }
+  .interval-display.phase-run .phase-label{ color: var(--teal); }
+  .interval-display.phase-walk .phase-label{ color: var(--amber); }
+  .interval-display .countdown{
+    font-family:'Anton', sans-serif; font-size:68px; line-height:1; letter-spacing:.01em;
+    display:inline-block; transform: skewX(-8deg);
+  }
+  .interval-display .cycle-info{ font-family:'IBM Plex Mono', monospace; font-size:12px; color: var(--ink-dim); }
+  .interval-bar{ width:100%; height:6px; border-radius:99px; background: var(--line); overflow:hidden; }
+  .interval-bar-fill{ height:100%; border-radius:99px; transition: width 1s linear, background .4s; }
+  .phase-run .interval-bar-fill{ background: var(--teal); }
+  .phase-walk .interval-bar-fill{ background: var(--amber); }
+
+  .segment-note{
+    width:100%; max-width:420px;
+    font-family:'IBM Plex Mono', monospace; font-size:11px; color: var(--ink-dim);
+    display:flex; align-items:center; justify-content:space-between;
+    padding: 2px 4px;
+  }
+  .segment-note button{
+    background:transparent; border:none; color: var(--ink-dim); text-decoration:underline;
+    font-family:'IBM Plex Sans KR', sans-serif; font-size:11px;
+  }
+
+  .map-card{ width:100%; max-width:420px; }
+  .map-card .eyebrow{ margin-bottom:6px; }
+  .map-wrap{
+    position:relative; width:100%; height:190px;
+    border-radius:16px; overflow:hidden; border:1px solid var(--line);
+    background: var(--bg-elevated);
+  }
+  #routeMap{ width:100%; height:100%; background: var(--bg-elevated); }
+  .map-overlay{
+    position:absolute; inset:0; z-index:500;
+    display:flex; align-items:center; justify-content:center; text-align:center;
+    padding:20px;
+    background: rgba(10,14,22,.6);
+    backdrop-filter: blur(2px);
+    font-family:'IBM Plex Sans KR', sans-serif; font-size:12px; color: var(--ink-dim);
+    transition: opacity .3s;
+  }
+  .map-overlay.hide{ opacity:0; pointer-events:none; }
+  .leaflet-control-attribution{ font-size:8px !important; background: rgba(10,14,22,.6) !important; color: var(--ink-dim) !important; }
+  .leaflet-control-attribution a{ color: var(--ink-dim) !important; }
+  .route-glow{ filter: drop-shadow(0 0 5px rgba(34,211,238,.7)); }
+
+  /* ── 헤더 아이콘 버튼 ── */
+  .icon-btn{
+    background: transparent; border:1.5px solid #fff; color: #fff;
+    border-radius:99px; padding:10px 16px; font-family:'IBM Plex Sans KR', sans-serif; font-size:22px; font-weight:700;
+    flex-shrink:0; white-space:nowrap;
+  }
+
+  /* ── 전체화면 오버레이 (히스토리/요약 공용) ── */
+  .overlay-panel{
+    position:fixed; inset:0; z-index:2000;
+    background: var(--bg);
+    display:none; flex-direction:column;
+    padding: 16px 20px calc(20px + env(safe-area-inset-bottom));
+    overflow-y:auto;
+  }
+  .overlay-panel.show{ display:flex; }
+  .overlay-header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-shrink:0; }
+  .overlay-header b{ font-family:'Anton', sans-serif; font-size:22px; letter-spacing:.02em; }
+  .overlay-close{ background: var(--bg-elevated); border:1px solid var(--line); color:var(--ink); border-radius:99px; width:32px; height:32px; font-size:16px; }
+
+  .stat-strip{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin-bottom:18px; }
+  .stat-strip .box{ background: var(--bg-elevated); border:1px solid var(--line); border-radius:14px; padding:12px 10px; text-align:center; }
+  .stat-strip .box .n{ font-family:'IBM Plex Mono', monospace; font-weight:700; font-size:20px; color: var(--teal); }
+  .stat-strip .box .l{ font-size:11px; color: var(--ink-dim); margin-top:4px; }
+
+  .history-item{
+    background: var(--bg-elevated); border:1px solid var(--line); border-radius:14px;
+    padding:12px 14px; margin-bottom:8px;
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  .history-item .d{ font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--ink-dim); }
+  .history-item .m{ font-family:'IBM Plex Mono', monospace; font-weight:600; }
+  .empty-hint{ color:var(--ink-dim); font-size:13px; text-align:center; padding:40px 20px; }
+
+  /* ── 종료 후 요약 ── */
+  .split-chart{ display:flex; align-items:flex-end; gap:4px; height:120px; margin:16px 0; padding:0 4px; }
+  .split-bar{ flex:1; background: linear-gradient(180deg, var(--cyan), var(--teal)); border-radius:4px 4px 0 0; min-height:4px; position:relative; }
+  .split-bar .lbl{ position:absolute; bottom:-18px; left:0; right:0; text-align:center; font-family:'IBM Plex Mono', monospace; font-size:9px; color:var(--ink-dim); }
+  .summary-actions{ display:flex; gap:10px; margin-top:28px; }
+  .summary-actions button{ flex:1; padding:14px; border-radius:14px; font-family:'IBM Plex Sans KR', sans-serif; font-weight:700; font-size:14px; }
+  .summary-actions .primary{ background: linear-gradient(90deg, var(--teal), var(--cyan)); border:none; color:#04211D; }
+  .summary-actions .ghost{ background: transparent; border:1px solid var(--line); color: var(--ink); }
+
+  #shareCanvas{ width:100%; max-width:340px; border-radius:16px; margin: 12px auto; display:block; border:1px solid var(--line); }
+
+  /* ── 안전 설정 ── */
+  .safety-panel{
+    width:100%; max-width:420px;
+    background: var(--bg-elevated); border:1px solid var(--line); border-radius:14px;
+    padding:14px 16px; display:flex; flex-direction:column; gap:12px;
+  }
+  .safety-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .safety-row input[type="tel"]{
+    flex:1; background: var(--bg); border:1px solid var(--line); border-radius:10px;
+    padding:9px 10px; color:var(--ink); font-family:'IBM Plex Mono', monospace; font-size:13px;
+  }
+  .toggle-switch{ position:relative; width:44px; height:24px; flex-shrink:0; }
+  .toggle-switch input{ opacity:0; width:0; height:0; }
+  .toggle-slider{ position:absolute; inset:0; background: var(--line); border-radius:99px; transition:.3s; cursor:pointer; }
+  .toggle-slider::before{ content:''; position:absolute; width:18px; height:18px; left:3px; top:3px; background:var(--ink-dim); border-radius:50%; transition:.3s; }
+  .toggle-switch input:checked + .toggle-slider{ background: var(--teal); }
+  .toggle-switch input:checked + .toggle-slider::before{ transform: translateX(20px); background:#04211D; }
+
+  /* ── SOS 경고 오버레이 ── */
+  .sos-overlay{
+    position:fixed; inset:0; z-index:3000;
+    background: rgba(255,60,40,.97);
+    display:none; flex-direction:column; align-items:center; justify-content:center; gap:18px;
+    text-align:center; padding:24px;
+  }
+  .sos-overlay.show{ display:flex; }
+  .sos-overlay h2{ font-family:'Anton', sans-serif; font-size:36px; color:#fff; }
+  .sos-overlay p{ color:#fff; font-size:14px; line-height:1.6; }
+  .sos-countdown{ font-family:'Anton', sans-serif; font-size:80px; color:#fff; }
+  .sos-cancel{ background:#fff; color:#B91C1C; border:none; border-radius:14px; padding:16px 40px; font-weight:700; font-size:16px; }
+
+  /* ── 훈련 존(VDOT) ── */
+  .zone-panel{
+    width:100%; max-width:420px;
+    background: var(--bg-elevated); border:1px solid var(--line); border-radius:14px;
+    padding:14px 16px; display:flex; flex-direction:column; gap:12px;
+  }
+  .zone-row{ display:flex; align-items:center; gap:8px; }
+  .zone-row input{
+    flex:1; background: var(--bg); border:1px solid var(--line); border-radius:10px;
+    padding:9px 10px; color:var(--ink); font-family:'IBM Plex Mono', monospace; font-size:13px;
+  }
+  .zone-row select{
+    background: var(--bg); border:1px solid var(--line); border-radius:10px;
+    padding:9px 8px; color:var(--ink); font-family:'IBM Plex Sans KR', sans-serif; font-size:13px;
+  }
+  .zone-chips{ display:grid; grid-template-columns:repeat(5,1fr); gap:6px; }
+  .zone-chip{
+    display:flex; flex-direction:column; align-items:center; gap:2px;
+    padding:8px 2px; border-radius:10px; border:1px solid var(--line); background: var(--bg);
+    font-family:'IBM Plex Mono', monospace;
+  }
+  .zone-chip .zl{ font-size:10px; color:var(--ink-dim); letter-spacing:.05em; }
+  .zone-chip .zp{ font-size:12px; font-weight:700; color: var(--ink); }
+  .zone-chip.active{ border-color: var(--violet); box-shadow:0 0 10px rgba(167,139,250,.35); }
+  .vdot-readout{ font-family:'IBM Plex Mono', monospace; font-size:11px; color: var(--ink-dim); text-align:center; }
+  .vdot-readout b{ color: var(--violet); }
+
+  /* ── 훈련 계획 ── */
+  .plan-form{ display:flex; flex-direction:column; gap:10px; margin-bottom:16px; }
+  .plan-form-row{ display:flex; align-items:center; gap:10px; }
+  .plan-form-row label{ flex:1; font-size:13px; color:var(--ink-dim); }
+  .plan-form-row input, .plan-form-row select{
+    background: var(--bg-elevated); border:1px solid var(--line); border-radius:10px;
+    padding:9px 10px; color:var(--ink); font-family:'IBM Plex Mono', monospace; font-size:13px; width:150px;
+  }
+  .plan-gen-btn{
+    padding:14px; border-radius:14px; border:none; font-weight:700; font-size:14px;
+    background: linear-gradient(90deg, var(--violet), var(--cyan)); color:#1a0f2e;
+  }
+  .plan-week{ margin-bottom:14px; }
+  .plan-week-title{
+    font-family:'IBM Plex Mono', monospace; font-size:11px; color: var(--ink-dim);
+    text-transform:uppercase; letter-spacing:.08em; margin-bottom:6px;
+    display:flex; justify-content:space-between;
+  }
+  .plan-days{ display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
+  .plan-day{
+    background: var(--bg-elevated); border:1px solid var(--line); border-radius:8px;
+    padding:6px 2px; text-align:center; font-family:'IBM Plex Mono', monospace;
+    display:flex; flex-direction:column; gap:2px; min-height:52px; justify-content:center;
+  }
+  .plan-day .dn{ font-size:9px; color:var(--ink-dim); }
+  .plan-day .dt{ font-size:10px; font-weight:700; }
+  .plan-day.type-rest{ opacity:.4; }
+  .plan-day.type-easy{ border-color: rgba(45,212,191,.3); }
+  .plan-day.type-easy .dt{ color: var(--teal); }
+  .plan-day.type-long{ border-color: rgba(34,211,238,.35); }
+  .plan-day.type-long .dt{ color: var(--cyan); }
+  .plan-day.type-tempo{ border-color: rgba(242,184,75,.35); }
+  .plan-day.type-tempo .dt{ color: var(--amber); }
+  .plan-day.type-interval{ border-color: rgba(255,107,74,.35); }
+  .plan-day.type-interval .dt{ color: var(--coral); }
+  .plan-day.type-race{ border-color: var(--violet); box-shadow:0 0 8px rgba(167,139,250,.3); }
+  .plan-day.type-race .dt{ color: var(--violet); }
+  .plan-day.today{ box-shadow: inset 0 0 0 1.5px #fff; }
+  .plan-phase-badge{
+    font-size:9px; padding:2px 8px; border-radius:99px; background: var(--line); color: var(--ink-dim);
+  }
+  .today-workout-card{
+    width:100%; max-width:420px;
+    background: linear-gradient(135deg, rgba(167,139,250,.12), var(--bg-elevated));
+    border:1px solid rgba(167,139,250,.3); border-radius:14px;
+    padding:14px 16px; display:flex; flex-direction:column; gap:8px;
+  }
+  .today-workout-card .tw-title{ font-family:'Anton', sans-serif; font-size:20px; letter-spacing:.02em; }
+  .today-workout-card button{
+    margin-top:4px; padding:12px; border-radius:12px; border:none; font-weight:700; font-size:13px;
+    background: linear-gradient(90deg, var(--violet), var(--cyan)); color:#1a0f2e;
+  }
+
+  /* ── 홈 화면 (훈련/대회 분기) ── */
+  .home-overlay{
+    position:fixed; inset:0; z-index:2500;
+    background: var(--bg);
+    display:none; flex-direction:column;
+    padding: 32px 20px calc(28px + env(safe-area-inset-bottom));
+  }
+  .home-overlay.show{ display:flex; }
+  .home-logo{
+    text-align:center; margin-bottom:28px; flex-shrink:0;
+  }
+  .home-logo b{
+    font-family:'Anton', sans-serif; font-size:40px; letter-spacing:.02em;
+    display:inline-block; transform: skewX(-9deg);
+    background: linear-gradient(90deg, var(--teal), var(--cyan) 55%, var(--violet));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .home-logo .eyebrow{ display:block; margin-top:6px; }
+  .home-choices{
+    flex:1; display:flex; flex-direction:column; gap:16px;
+    min-height:0;
+  }
+  .home-card{
+    flex:1; border-radius:24px; border:1px solid var(--line);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
+    padding: 20px; text-align:center; position:relative; overflow:hidden;
+  }
+  .home-card .hc-icon{ font-size:44px; line-height:1; }
+  .home-card .hc-title{
+    font-family:'Anton', sans-serif; font-size:26px; letter-spacing:.02em;
+    display:inline-block; transform: skewX(-6deg);
+  }
+  .home-card .hc-desc{ font-size:13px; color: var(--ink-dim); max-width:260px; line-height:1.6; }
+  .home-card.hc-training{
+    background: linear-gradient(160deg, rgba(45,212,191,.14), var(--bg-elevated) 65%);
+    border-color: rgba(45,212,191,.3);
+  }
+  .home-card.hc-training .hc-title{ color: var(--teal); }
+  .home-card.hc-race{
+    background: linear-gradient(160deg, rgba(167,139,250,.14), var(--bg-elevated) 65%);
+    border-color: rgba(167,139,250,.3);
+  }
+  .home-card.hc-race .hc-title{ color: var(--violet); }
+
+  /* ── 접이식 패널 (음성/안전/훈련존) ── */
+  .collapsible-header{
+    display:flex; justify-content:space-between; align-items:center; cursor:pointer;
+  }
+  .collapsible-arrow{
+    font-size:14px; color: var(--ink-dim); transition: transform .25s;
+    display:inline-flex; align-items:center; justify-content:center;
+  }
+  .collapsible-arrow.open{ transform: rotate(180deg); }
+  .collapsible-body{
+    display:none; flex-direction:column; gap:12px; margin-top:12px;
+  }
+  .collapsible-body.open{ display:flex; }
+
+  .log{
+    width:100%; max-width:420px; flex:1;
+    display:flex; flex-direction:column; gap:8px;
+    overflow-y:auto; padding-bottom:8px;
+    min-height:70px;
+  }
+  .log-item{
+    display:flex; gap:10px; align-items:baseline;
+    font-size:13px; color: var(--ink-dim);
+    border-left:2px solid var(--line); padding-left:10px;
+  }
+  .log-item .t{ font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--ink-dim); white-space:nowrap; }
+  .log-item.voice{ color: var(--ink); border-left-color: var(--teal); }
+  .log-item.slope{ color: var(--amber); border-left-color: var(--amber); }
+  .log-item.slope, .log-item.voice{ }
+
+  footer{
+    padding: 12px 20px calc(14px + env(safe-area-inset-bottom));
+    display:flex; gap:10px;
+    border-top:1px solid var(--line);
+    background: var(--bg-elevated);
+    flex-shrink:0;
+  }
+  button.primary{
+    flex:1; padding:16px; border-radius:14px; border:none;
+    font-family:'IBM Plex Sans KR', sans-serif; font-weight:700; font-size:16px;
+    background: linear-gradient(90deg, var(--teal), var(--cyan));
+    color:#04211D; letter-spacing:.01em;
+    box-shadow: 0 4px 20px rgba(45,212,191,.35);
+  }
+  button.primary.running{
+    background: linear-gradient(90deg, var(--coral), #FF8A65);
+    color:#2A0D06;
+    box-shadow: 0 4px 20px rgba(255,107,74,.35);
+  }
+  button.ghost{
+    padding:16px 18px; border-radius:14px; border:1px solid var(--line);
+    background:transparent; color:var(--ink-dim); font-family:'IBM Plex Sans KR', sans-serif; font-size:14px;
+  }
+  .permission-note{
+    max-width:420px; font-size:12px; color:var(--ink-dim); text-align:center; line-height:1.6;
+    padding: 0 20px;
+  }
+  .permission-note b{ color: var(--ink); }
+
+  .voice-panel{
+    width:100%; max-width:420px;
+    background: var(--bg-elevated); border:1px solid var(--line); border-radius:14px;
+    padding:14px 16px;
+    display:flex; flex-direction:column; gap:12px;
+  }
+  .voice-panel select{
+    width:100%; background: var(--bg); color: var(--ink); border:1px solid var(--line);
+    border-radius:10px; padding:9px 10px; font-family:'IBM Plex Sans KR', sans-serif; font-size:13px;
+  }
+  .voice-panel select:focus{ outline:none; border-color: var(--violet); }
+  .voice-slider-row{ display:flex; flex-direction:column; gap:4px; }
+  .voice-slider-row .row-label{
+    display:flex; justify-content:space-between;
+    font-family:'IBM Plex Mono', monospace; font-size:11px; color: var(--ink-dim);
+  }
+  .voice-slider-row .row-label b{ color: var(--violet); }
+  .voice-slider-row input[type="range"]{
+    -webkit-appearance:none; width:100%; height:4px; border-radius:99px;
+    background: var(--line); accent-color: var(--violet);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="eyebrow" id="headerEyebrow">준썰 · 러닝 프로토타입</span>
+    <b>PACER</b>
+  </div>
+  <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
+    <button class="icon-btn" id="homeBtn" style="display:none;" title="홈으로">🏠</button>
+    <button class="icon-btn" id="planBtn" title="훈련 계획">🎯</button>
+    <button class="icon-btn" id="historyBtn" title="러닝 기록">📊</button>
+    <div class="status-pill" id="gpsStatus"><span class="dot"></span><span id="gpsStatusText">GPS 대기</span></div>
+  </div>
+</header>
+
+<div class="home-overlay show" id="homeOverlay">
+  <div class="home-logo">
+    <b>PACER</b>
+    <span class="eyebrow">오늘은 어떤 러닝을 하시나요?</span>
+  </div>
+  <div class="home-choices">
+    <button class="home-card hc-training" id="homeTrainingCard">
+      <span class="hc-icon">🏃</span>
+      <span class="hc-title">훈련</span>
+      <span class="hc-desc">페이스 연습 · 인터벌 · 훈련 존(VDOT)으로<br>자유롭게 오늘의 러닝을 진행해요</span>
+    </button>
+    <button class="home-card hc-race" id="homeRaceCard">
+      <span class="hc-icon">🏁</span>
+      <span class="hc-title">대회 목표</span>
+      <span class="hc-desc">목표 거리·시간을 정하면<br>완주까지 페이스를 코칭해드려요</span>
+    </button>
+  </div>
+</div>
+
+<main>
+  <div class="ring-wrap">
+    <svg class="ring" viewBox="0 0 200 200">
+      <circle class="ring-track" cx="100" cy="100" r="88"></circle>
+      <circle class="ring-fill" id="ringFill" cx="100" cy="100" r="88" stroke-dasharray="553" stroke-dashoffset="553"></circle>
+    </svg>
+    <div class="ring-center">
+      <span class="label">현재 페이스</span>
+      <div class="pace"><span id="curPace">--:--</span><small>/km</small></div>
+      <div class="delta even" id="deltaBadge">목표 대비 --</div>
+    </div>
+  </div>
+
+  <div class="slope-badge" id="slopeBadge">▲ 오르막 구간 감지</div>
+
+  <div class="today-workout-card" id="todayWorkoutCard" style="display:none;">
+    <div class="eyebrow">오늘의 훈련</div>
+    <div class="tw-title" id="twTitle">이지런닝 40분</div>
+    <div class="ts" id="twDetail" style="font-family:'IBM Plex Mono', monospace; font-size:12px; color:var(--ink-dim);">E페이스 6:30/km 기준</div>
+    <button id="startTodayWorkoutBtn">이 훈련으로 바로 시작</button>
+  </div>
+
+  <div class="mode-tabs" id="modeTabsWrap">
+    <button id="tabTraining" class="active">페이스 훈련</button>
+    <button id="tabGoal">목표 완주</button>
+    <button id="tabInterval">인터벌</button>
+  </div>
+
+  <div class="target-row" id="trainingPanel">
+    <div>
+      <div class="eyebrow">목표 페이스</div>
+      <div style="font-size:12px; color:var(--ink-dim)">km당 도달 시간</div>
+    </div>
+    <div class="pace-input">
+      <input type="number" id="targetMin" value="6" min="2" max="15">
+      <span class="sep">:</span>
+      <input type="number" id="targetSec" value="0" min="0" max="59">
+    </div>
+  </div>
+
+  <div class="goal-panel" id="goalPanel" style="display:none;">
+    <div class="goal-row">
+      <div>
+        <div class="eyebrow">목표 거리</div>
+      </div>
+      <div class="pace-input">
+        <input type="number" id="goalDist" value="5" min="1" max="42" step="0.5">
+        <span class="sep">km</span>
+      </div>
+    </div>
+    <div class="goal-row">
+      <div>
+        <div class="eyebrow">목표 시간</div>
+      </div>
+      <div class="pace-input">
+        <input type="number" id="goalMin" value="40" min="1" max="300">
+        <span class="sep">:</span>
+        <input type="number" id="goalSec" value="0" min="0" max="59">
+      </div>
+    </div>
+    <div>
+      <div class="eyebrow" style="margin-bottom:8px;">러너 레벨 (평지 기준 페이스 곡선)</div>
+      <div class="level-group" id="levelGroup">
+        <button data-level="beginner">초급</button>
+        <button data-level="intermediate" class="active">중급</button>
+        <button data-level="advanced">고급</button>
+      </div>
+    </div>
+    <div class="goal-derived" id="goalDerived">평균 페이스 <b>--:--</b>/km · 초반 <b>--:--</b> · 후반 <b>--:--</b></div>
+  </div>
+
+  <div class="interval-panel" id="intervalPanel" style="display:none;">
+    <div class="goal-row">
+      <div><div class="eyebrow">뛰기 시간</div></div>
+      <div class="pace-input">
+        <input type="number" id="runMin" value="2" min="0" max="30">
+        <span class="sep">:</span>
+        <input type="number" id="runSec" value="0" min="0" max="59">
+      </div>
+    </div>
+    <div class="goal-row">
+      <div><div class="eyebrow">걷기 시간</div></div>
+      <div class="pace-input">
+        <input type="number" id="walkMin" value="1" min="0" max="30">
+        <span class="sep">:</span>
+        <input type="number" id="walkSec" value="0" min="0" max="59">
+      </div>
+    </div>
+    <div class="cycles-row">
+      <div class="eyebrow" style="flex:1;">반복 횟수</div>
+      <input type="number" id="cycleCount" value="5" min="1" max="50">
+      <label class="unlimited-toggle">
+        <input type="checkbox" id="unlimitedToggle">
+        무제한(직접 종료)
+      </label>
+    </div>
+  </div>
+
+  <div class="interval-display" id="intervalDisplay">
+    <span class="phase-label" id="phaseLabel">뛰기</span>
+    <div class="countdown" id="intervalCountdown">02:00</div>
+    <div class="interval-bar"><div class="interval-bar-fill" id="intervalBarFill" style="width:100%"></div></div>
+    <span class="cycle-info" id="cycleInfo">1 / 5 회차</span>
+  </div>
+
+  <div class="slope-badge" id="segmentBadge" style="border-color:rgba(45,212,191,.3); background:rgba(45,212,191,.06); color:var(--teal);">초반 구간 · 여유 있게</div>
+
+  <div class="segment-note" id="segmentNote">
+    <span id="segmentNoteText">저장된 구간 기록 0개</span>
+    <button id="resetSegmentsBtn">기록 초기화</button>
+  </div>
+
+  <div class="stat-grid">
+    <div class="stat c-cyan"><div class="eyebrow">거리</div><div class="val" id="statDist">0.00 km</div></div>
+    <div class="stat c-violet"><div class="eyebrow">시간</div><div class="val" id="statTime">00:00</div></div>
+    <div class="stat c-teal"><div class="eyebrow">평균 페이스</div><div class="val" id="statAvg">--:--</div></div>
+    <div class="stat c-amber"><div class="eyebrow">케이던스</div><div class="val" id="statCadence">-- spm</div></div>
+  </div>
+
+  <div class="voice-panel">
+    <div class="collapsible-header" data-target="voiceBody">
+      <div class="eyebrow">음성 설정</div>
+      <span class="collapsible-arrow" id="voiceArrow">▼</span>
+    </div>
+    <div class="collapsible-body" id="voiceBody">
+      <div>
+        <select id="voiceSelect"><option value="">기본 음성</option></select>
+      </div>
+      <div class="voice-slider-row">
+        <div class="row-label"><span>말하기 속도</span><b id="rateLabel">1.02x</b></div>
+        <input type="range" id="voiceRate" min="0.7" max="1.4" step="0.02" value="1.02">
+      </div>
+      <div class="voice-slider-row">
+        <div class="row-label"><span>음높이</span><b id="pitchLabel">1.00</b></div>
+        <input type="range" id="voicePitch" min="0.6" max="1.5" step="0.02" value="1.0">
+      </div>
+    </div>
+  </div>
+
+  <div class="safety-panel">
+    <div class="collapsible-header" data-target="safetyBody">
+      <div class="eyebrow">안전 설정</div>
+      <span class="collapsible-arrow" id="safetyArrow">▼</span>
+    </div>
+    <div class="collapsible-body" id="safetyBody">
+      <div>
+        <input type="tel" id="emergencyContact" placeholder="비상연락처 (예: 01012345678)" style="width:100%; background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:9px 10px; color:var(--ink); font-family:'IBM Plex Mono', monospace; font-size:13px;">
+      </div>
+      <div class="safety-row">
+        <span style="font-size:13px;">낙상 감지 SOS</span>
+        <label class="toggle-switch"><input type="checkbox" id="fallDetectToggle"><span class="toggle-slider"></span></label>
+      </div>
+      <div class="safety-row">
+        <span style="font-size:13px;">케이던스 코칭</span>
+        <label class="toggle-switch"><input type="checkbox" id="cadenceToggle" checked><span class="toggle-slider"></span></label>
+      </div>
+      <button class="ghost" id="motionPermBtn" style="padding:10px; border-radius:10px; border:1px solid var(--line); background:transparent; color:var(--ink-dim); font-size:12px;">동작 센서 권한 허용 (iOS 필수)</button>
+    </div>
+  </div>
+
+  <div class="zone-panel">
+    <div class="collapsible-header" data-target="zoneBody">
+      <div class="eyebrow">훈련 존 계산 (Jack Daniels VDOT)</div>
+      <span class="collapsible-arrow" id="zoneArrow">▼</span>
+    </div>
+    <div class="collapsible-body" id="zoneBody">
+      <div class="zone-row">
+        <input type="number" id="raceDistInput" placeholder="최근 레이스 거리(km)" value="5" step="0.1">
+        <select id="raceTimeMin"></select>
+        <span class="sep">:</span>
+        <select id="raceTimeSec"></select>
+      </div>
+      <div class="vdot-readout" id="vdotReadout">최근 기록을 입력하면 VDOT과 훈련 페이스가 계산됩니다.</div>
+      <div class="zone-chips" id="zoneChips">
+        <div class="zone-chip" data-zone="E"><span class="zl">EASY</span><span class="zp">--:--</span></div>
+        <div class="zone-chip" data-zone="M"><span class="zl">MARA</span><span class="zp">--:--</span></div>
+        <div class="zone-chip" data-zone="T"><span class="zl">TEMPO</span><span class="zp">--:--</span></div>
+        <div class="zone-chip" data-zone="I"><span class="zl">INTVL</span><span class="zp">--:--</span></div>
+        <div class="zone-chip" data-zone="R"><span class="zl">REP</span><span class="zp">--:--</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="map-card">
+    <div class="eyebrow">실시간 경로</div>
+    <div class="map-wrap">
+      <div id="routeMap"></div>
+      <div class="map-overlay" id="mapOverlay">러닝을 시작하면<br>실시간 이동 경로가 여기 표시됩니다</div>
+    </div>
+  </div>
+
+  <div class="log" id="log"></div>
+
+  <p class="permission-note" id="permNote">시작을 누르면 <b>위치 권한</b>을 요청합니다. 음성 코칭은 폰의 <b>블루투스 출력 기기</b>(글라스 스피커)로 자동 재생됩니다 — 폰 설정에서 미리 페어링해두세요.</p>
+</main>
+
+<!-- 히스토리 오버레이 -->
+<div class="overlay-panel" id="historyOverlay">
+  <div class="overlay-header">
+    <b>러닝 기록</b>
+    <button class="overlay-close" id="closeHistoryBtn">✕</button>
+  </div>
+  <div class="stat-strip">
+    <div class="box"><div class="n" id="streakStat">0</div><div class="l">연속 일수</div></div>
+    <div class="box"><div class="n" id="weekDistStat">0.0</div><div class="l">이번주 km</div></div>
+    <div class="box"><div class="n" id="totalRunsStat">0</div><div class="l">총 러닝 횟수</div></div>
+  </div>
+  <div id="historyList"></div>
+</div>
+
+<!-- 종료 후 요약 오버레이 -->
+<div class="overlay-panel" id="summaryOverlay">
+  <div class="overlay-header">
+    <b>러닝 완료</b>
+    <button class="overlay-close" id="closeSummaryBtn">✕</button>
+  </div>
+  <div class="stat-strip">
+    <div class="box"><div class="n" id="sumDist">0.00</div><div class="l">km</div></div>
+    <div class="box"><div class="n" id="sumTime">00:00</div><div class="l">시간</div></div>
+    <div class="box"><div class="n" id="sumPace">--:--</div><div class="l">평균 페이스</div></div>
+  </div>
+  <div class="eyebrow" style="margin-bottom:4px;">구간별 페이스</div>
+  <div class="split-chart" id="splitChart"></div>
+  <canvas id="shareCanvas" width="680" height="850" style="display:none;"></canvas>
+  <div class="summary-actions">
+    <button class="ghost" id="closeSummaryBtn2">닫기</button>
+    <button class="primary" id="makeShareCardBtn">공유카드 만들기</button>
+  </div>
+</div>
+
+<!-- SOS 경고 오버레이 -->
+<div class="sos-overlay" id="sosOverlay">
+  <h2>⚠️ 괜찮으신가요?</h2>
+  <p>충격이 감지됐습니다.<br>응답이 없으면 비상연락처로<br>위치 정보를 보낼 준비를 합니다.</p>
+  <div class="sos-countdown" id="sosCountdown">15</div>
+  <button class="sos-cancel" id="sosCancelBtn">괜찮아요, 취소할게요</button>
+</div>
+
+<div class="overlay-panel" id="planOverlay">
+  <div class="overlay-header">
+    <b>훈련 계획</b>
+    <button class="overlay-close" id="closePlanBtn">✕</button>
+  </div>
+  <div class="plan-form">
+    <div class="plan-form-row">
+      <label>목표 거리</label>
+      <select id="goalDistSelect">
+        <option value="5">5km</option>
+        <option value="10">10km</option>
+        <option value="21.0975">하프마라톤 (21.1km)</option>
+        <option value="42.195" selected>풀마라톤 (42.2km)</option>
+      </select>
+    </div>
+    <div class="plan-form-row">
+      <label>대회 날짜</label>
+      <input type="date" id="raceDateInput">
+    </div>
+    <div class="plan-form-row">
+      <label>주당 훈련일수</label>
+      <select id="daysPerWeekSelect">
+        <option value="3">3일</option>
+        <option value="4" selected>4일</option>
+        <option value="5">5일</option>
+        <option value="6">6일</option>
+      </select>
+    </div>
+    <button class="plan-gen-btn" id="generatePlanBtn">훈련 계획 생성</button>
+  </div>
+  <div id="planContent"></div>
+</div>
+
+<footer>
+  <button class="primary" id="toggleBtn">러닝 시작</button>
+  <button class="ghost" id="testVoiceBtn">음성 테스트</button>
+</footer>
+
+<script>
+(function(){
+  const $ = (id) => document.getElementById(id);
+  const els = {
+    gpsStatus: $('gpsStatus'), gpsStatusText: $('gpsStatusText'),
+    curPace: $('curPace'), deltaBadge: $('deltaBadge'), ringFill: $('ringFill'),
+    slopeBadge: $('slopeBadge'), segmentBadge: $('segmentBadge'),
+    tabTraining: $('tabTraining'), tabGoal: $('tabGoal'), tabInterval: $('tabInterval'),
+    trainingPanel: $('trainingPanel'), goalPanel: $('goalPanel'), intervalPanel: $('intervalPanel'),
+    targetMin: $('targetMin'), targetSec: $('targetSec'),
+    goalDist: $('goalDist'), goalMin: $('goalMin'), goalSec: $('goalSec'),
+    levelGroup: $('levelGroup'), goalDerived: $('goalDerived'),
+    runMin: $('runMin'), runSec: $('runSec'), walkMin: $('walkMin'), walkSec: $('walkSec'),
+    cycleCount: $('cycleCount'), unlimitedToggle: $('unlimitedToggle'),
+    intervalDisplay: $('intervalDisplay'), phaseLabel: $('phaseLabel'),
+    intervalCountdown: $('intervalCountdown'), intervalBarFill: $('intervalBarFill'), cycleInfo: $('cycleInfo'),
+    segmentNoteText: $('segmentNoteText'), resetSegmentsBtn: $('resetSegmentsBtn'),
+    mapOverlay: $('mapOverlay'),
+    voiceSelect: $('voiceSelect'), voiceRate: $('voiceRate'), voicePitch: $('voicePitch'),
+    rateLabel: $('rateLabel'), pitchLabel: $('pitchLabel'),
+    statDist: $('statDist'), statTime: $('statTime'), statAvg: $('statAvg'), statCadence: $('statCadence'),
+    log: $('log'), toggleBtn: $('toggleBtn'), testVoiceBtn: $('testVoiceBtn'),
+    permNote: $('permNote'),
+    historyBtn: $('historyBtn'), historyOverlay: $('historyOverlay'), closeHistoryBtn: $('closeHistoryBtn'),
+    streakStat: $('streakStat'), weekDistStat: $('weekDistStat'), totalRunsStat: $('totalRunsStat'), historyList: $('historyList'),
+    summaryOverlay: $('summaryOverlay'), closeSummaryBtn: $('closeSummaryBtn'), closeSummaryBtn2: $('closeSummaryBtn2'),
+    sumDist: $('sumDist'), sumTime: $('sumTime'), sumPace: $('sumPace'), splitChart: $('splitChart'),
+    shareCanvas: $('shareCanvas'), makeShareCardBtn: $('makeShareCardBtn'),
+    emergencyContact: $('emergencyContact'), fallDetectToggle: $('fallDetectToggle'), cadenceToggle: $('cadenceToggle'),
+    motionPermBtn: $('motionPermBtn'),
+    sosOverlay: $('sosOverlay'), sosCountdown: $('sosCountdown'), sosCancelBtn: $('sosCancelBtn'),
+    planBtn: $('planBtn'), planOverlay: $('planOverlay'), closePlanBtn: $('closePlanBtn'),
+    raceDistInput: $('raceDistInput'), raceTimeMin: $('raceTimeMin'), raceTimeSec: $('raceTimeSec'),
+    vdotReadout: $('vdotReadout'), zoneChips: $('zoneChips'),
+    goalDistSelect: $('goalDistSelect'), raceDateInput: $('raceDateInput'), daysPerWeekSelect: $('daysPerWeekSelect'),
+    generatePlanBtn: $('generatePlanBtn'), planContent: $('planContent'),
+    todayWorkoutCard: $('todayWorkoutCard'), twTitle: $('twTitle'), twDetail: $('twDetail'), startTodayWorkoutBtn: $('startTodayWorkoutBtn'),
+    homeOverlay: $('homeOverlay'), homeTrainingCard: $('homeTrainingCard'), homeRaceCard: $('homeRaceCard'),
+    homeBtn: $('homeBtn'), modeTabsWrap: $('modeTabsWrap'), headerEyebrow: $('headerEyebrow')
+  };
+
+  // ── 지도 (실시간 이동 경로) ──
+  const routeMap = L.map('routeMap', {
+    zoomControl: false,
+    attributionControl: true
+  }).setView([37.5665, 126.9780], 15); // 기본값: 서울, GPS 잡히면 자동 이동
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap &copy; CARTO'
+  }).addTo(routeMap);
+
+  const routeLine = L.polyline([], { color: '#22D3EE', weight: 4, opacity: 0.95, className: 'route-glow' }).addTo(routeMap);
+  const routeMarker = L.circleMarker([0, 0], {
+    radius: 7, color: '#22D3EE', weight: 2, fillColor: '#0A0E16', fillOpacity: 1, className: 'route-glow'
+  });
+
+  function resetMap(){
+    routeLine.setLatLngs([]);
+    routeMap.removeLayer(routeMarker);
+    els.mapOverlay.classList.remove('hide');
+    els.mapOverlay.innerHTML = '러닝을 시작하면<br>실시간 이동 경로가 여기 표시됩니다';
+  }
+
+  function updateMap(lat, lon){
+    if(els.mapOverlay && !els.mapOverlay.classList.contains('hide')){
+      els.mapOverlay.classList.add('hide');
+    }
+    const latlng = [lat, lon];
+    routeLine.addLatLng(latlng);
+    if(!routeMap.hasLayer(routeMarker)) routeMarker.addTo(routeMap);
+    routeMarker.setLatLng(latlng);
+    routeMap.panTo(latlng, { animate: true, duration: 0.5 });
+  }
+
+  // 러너 레벨별 구간 페이스 곡선 (평지 기준). start/mid/end는 평균 페이스 대비 %가감
+  // 양수 = 그 구간에서 더 느리게(여유), 음수 = 더 빠르게(스퍼트)
+  const LEVEL_CURVES = {
+    beginner: {
+      start: 8, mid: 0, end: -8,
+      labels: { start: '초반 구간 · 여유 있게 시작하세요', mid: '중반 구간 · 목표 페이스 유지', end: '후반 구간 · 컨디션 되면 살짝 당겨보세요' }
+    },
+    intermediate: {
+      start: 0, mid: 0, end: 0,
+      labels: { start: '균등 페이스 구간', mid: '균등 페이스 구간', end: '균등 페이스 구간 · 끝까지 유지' }
+    },
+    advanced: {
+      start: 3, mid: 0, end: -3,
+      labels: { start: '초반 구간 · 절제된 페이스', mid: '중반 구간 · 목표 페이스 유지', end: '후반 구간 · 네거티브 스플릿 스퍼트' }
+    }
+  };
+  let currentMode = 'training'; // 'training' | 'goal' | 'interval'
+  let currentLevel = 'intermediate';
+  let lastSegment = null; // 'start' | 'mid' | 'end'
+
+  // ── 인터벌 모드 상태 ──
+  let intervalTimerId = null;
+  let intervalPhase = 'run'; // 'run' | 'walk'
+  let intervalRemainingSec = 0;
+  let intervalCycleDone = 0;
+
+  // ── 세그먼트(구간 PR) 저장소 — 브라우저 localStorage에 km 단위 최고기록 저장 ──
+  const SEGMENT_KEY = 'pacer_segment_pr_v1';
+  function loadSegmentPR(){
+    try { return JSON.parse(localStorage.getItem(SEGMENT_KEY) || '{}'); }
+    catch(e){ return {}; }
+  }
+  function saveSegmentPR(data){
+    try { localStorage.setItem(SEGMENT_KEY, JSON.stringify(data)); } catch(e){}
+  }
+  function updateSegmentNote(){
+    const data = loadSegmentPR();
+    const count = Object.keys(data).length;
+    els.segmentNoteText.textContent = `저장된 구간 기록 ${count}개`;
+  }
+  let kmSplitStartTime = null; // 이번 킬로미터 구간이 시작된 시각
+  let sessionSplits = []; // 이번 러닝의 km별 스플릿(초) 기록 [{km, sec}]
+
+  // ── 러닝 히스토리 저장소 ──
+  const HISTORY_KEY = 'pacer_history_v1';
+  function loadHistory(){
+    try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); }
+    catch(e){ return []; }
+  }
+  function saveHistory(list){
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(list)); } catch(e){}
+  }
+  function addHistorySession(session){
+    const list = loadHistory();
+    list.unshift(session); // 최신순
+    if(list.length > 200) list.length = 200;
+    saveHistory(list);
+  }
+
+  // ── 안전 설정 저장소 ──
+  function loadEmergencyContact(){ return localStorage.getItem('pacer_emergency_contact') || ''; }
+  function saveEmergencyContact(v){ try{ localStorage.setItem('pacer_emergency_contact', v); }catch(e){} }
+  function loadToggle(key, def){
+    const v = localStorage.getItem(key);
+    return v === null ? def : v === '1';
+  }
+  function saveToggle(key, val){ try{ localStorage.setItem(key, val ? '1':'0'); }catch(e){} }
+
+  // ── 케이던스 / 낙상감지 상태 ──
+  let motionPermGranted = false;
+  let cadenceEnabled = true;
+  let fallDetectEnabled = false;
+  let stepTimestamps = [];      // 최근 걸음 시각 기록(케이던스 계산용)
+  let lastAccelMag = 0;
+  let lastStepPeakTime = 0;
+  let currentCadenceSpm = null;
+  let lastCadenceVoiceAt = 0;
+  const CADENCE_TARGET_MIN = 165; // 이보다 낮으면 코칭
+
+  // 낙상 감지 상태
+  let impactDetectedAt = 0;
+  let stillnessStart = 0;
+  let sosTimerId = null;
+  let sosCountdownSec = 15;
+  const IMPACT_THRESHOLD = 28;   // m/s^2, 순간 충격 기준
+  const STILLNESS_THRESHOLD = 1.5; // 이 이하 변화면 "정지" 상태로 간주
+  const STILLNESS_REQUIRED_MS = 1200;
+
+  // ══════════════ VDOT (Jack Daniels) 훈련 존 계산 ══════════════
+  function vo2FromVelocity(v){
+    return -4.60 + 0.182258*v + 0.000104*v*v;
+  }
+  function percentVO2FromTime(tMin){
+    return 0.8 + 0.1894393*Math.exp(-0.012778*tMin) + 0.2989558*Math.exp(-0.1932605*tMin);
+  }
+  function velocityFromVO2(vo2){
+    const a = 0.000104, b = 0.182258, c = -(4.60 + vo2);
+    return (-b + Math.sqrt(b*b - 4*a*c)) / (2*a);
+  }
+  function calcVDOT(distanceKm, timeSec){
+    if(!distanceKm || !timeSec) return null;
+    const timeMin = timeSec / 60;
+    const v = (distanceKm * 1000) / timeMin;
+    const vo2 = vo2FromVelocity(v);
+    const pct = percentVO2FromTime(timeMin);
+    return vo2 / pct;
+  }
+  const ZONE_PCT = { E: 0.70, M: 0.80, T: 0.86, I: 0.975, R: 1.08 };
+  function zonePaceSecPerKm(vdot, zone){
+    const targetVO2 = vdot * ZONE_PCT[zone];
+    const v = velocityFromVO2(targetVO2);
+    return 1000 / v * 60;
+  }
+  let currentVDOT = null;
+  let zonePaces = { E:null, M:null, T:null, I:null, R:null };
+
+  function loadRecentRace(){
+    try { return JSON.parse(localStorage.getItem('pacer_recent_race') || 'null'); }
+    catch(e){ return null; }
+  }
+  function saveRecentRace(d){ try{ localStorage.setItem('pacer_recent_race', JSON.stringify(d)); }catch(e){} }
+
+  function recalcZones(){
+    const dist = parseFloat(els.raceDistInput.value);
+    const m = parseInt(els.raceTimeMin.value || '0', 10);
+    const s = parseInt(els.raceTimeSec.value || '0', 10);
+    const timeSec = m*60 + s;
+    if(!dist || !timeSec){ return; }
+    currentVDOT = calcVDOT(dist, timeSec);
+    if(!currentVDOT || !isFinite(currentVDOT)) return;
+    ['E','M','T','I','R'].forEach(z => { zonePaces[z] = zonePaceSecPerKm(currentVDOT, z); });
+    els.vdotReadout.innerHTML = `VDOT <b>${currentVDOT.toFixed(1)}</b> · 훈련 페이스 존 계산 완료`;
+    [...els.zoneChips.children].forEach(chip => {
+      const z = chip.dataset.zone;
+      chip.querySelector('.zp').textContent = fmtPace(zonePaces[z]);
+    });
+    saveRecentRace({ dist, timeSec });
+  }
+
+  function populateTimeSelects(){
+    for(let i=0;i<60;i++){
+      const om = document.createElement('option'); om.value=i; om.textContent=String(i).padStart(2,'0');
+      els.raceTimeMin.appendChild(om);
+      const os = document.createElement('option'); os.value=i; os.textContent=String(i).padStart(2,'0');
+      els.raceTimeSec.appendChild(os);
+    }
+    els.raceTimeMin.value = 25; els.raceTimeSec.value = 0;
+  }
+
+  // ══════════════ 훈련 계획 생성 ══════════════
+  const PLAN_KEY = 'pacer_training_plan_v1';
+  function loadPlan(){
+    try { return JSON.parse(localStorage.getItem(PLAN_KEY) || 'null'); }
+    catch(e){ return null; }
+  }
+  function savePlan(p){ try{ localStorage.setItem(PLAN_KEY, JSON.stringify(p)); }catch(e){} }
+
+  const DAY_NAMES = ['일','월','화','수','목','금','토'];
+
+  function generateTrainingPlan(goalDistKm, raceDate, daysPerWeek){
+    const today = new Date(); today.setHours(0,0,0,0);
+    const race = new Date(raceDate); race.setHours(0,0,0,0);
+    const totalDays = Math.max(7, Math.round((race - today) / 86400000));
+    const totalWeeks = Math.max(2, Math.ceil(totalDays / 7));
+
+    const taperWeeks = Math.min(2, Math.max(1, Math.round(totalWeeks * 0.1)));
+    const peakWeeks = Math.max(1, Math.round(totalWeeks * 0.15));
+    const buildWeeks = Math.max(1, Math.round(totalWeeks * 0.35));
+    const baseWeeks = Math.max(1, totalWeeks - taperWeeks - peakWeeks - buildWeeks);
+
+    const slotPatterns = {
+      3: [2,4,6],
+      4: [2,4,6,0],
+      5: [1,2,4,5,6],
+      6: [1,2,3,4,5,6]
+    };
+    const activeSlots = slotPatterns[daysPerWeek] || slotPatterns[4];
+    const longRunSlot = activeSlots.includes(0) ? 0 : 6;
+
+    const weeks = [];
+    let weekStart = new Date(today);
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+
+    for(let w=0; w<totalWeeks; w++){
+      let phase = 'base', phaseLabel = '기초';
+      const fromEnd = totalWeeks - w;
+      if(fromEnd <= taperWeeks){ phase='taper'; phaseLabel='테이퍼'; }
+      else if(fromEnd <= taperWeeks + peakWeeks){ phase='peak'; phaseLabel='피크'; }
+      else if(fromEnd <= taperWeeks + peakWeeks + buildWeeks){ phase='build'; phaseLabel='빌드업'; }
+
+      const days = [];
+      for(let d=0; d<7; d++){
+        const date = new Date(weekStart); date.setDate(date.getDate() + w*7 + d);
+        const isRaceDay = date.getTime() === race.getTime();
+        let type = 'rest', label = '휴식', paceZone = null, durationMin = 0;
+
+        if(isRaceDay){
+          type='race'; label='🏁 대회일';
+        } else if(activeSlots.includes(d) && date >= today){
+          if(d === longRunSlot){
+            type='long'; paceZone = phase==='peak' ? 'M' : 'E';
+            durationMin = phase==='base' ? 50+w*3 : phase==='build' ? 75+(w-baseWeeks)*5 : phase==='peak' ? 100 : 40;
+            durationMin = Math.min(durationMin, phase==='taper' ? 45 : 150);
+            label = `롱런 ${durationMin}분`;
+          } else if(phase==='build' && d===activeSlots[1]){
+            type='tempo'; paceZone='T'; durationMin=25; label='템포런 25분';
+          } else if(phase==='build' && activeSlots.length>2 && d===activeSlots[2]){
+            type='interval'; paceZone='I'; durationMin=20; label='인터벌 20분';
+          } else if(phase==='peak' && d===activeSlots[1]){
+            type='tempo'; paceZone='T'; durationMin=20; label='템포런 20분';
+          } else if(phase==='taper'){
+            type='easy'; paceZone='E'; durationMin=20; label='이지런닝 20분';
+          } else {
+            type='easy'; paceZone='E'; durationMin = phase==='base' ? 30 : 40;
+            label = `이지런닝 ${durationMin}분`;
+          }
+        }
+        days.push({ date: date.toISOString().slice(0,10), dayName: DAY_NAMES[d], type, label, paceZone, durationMin });
+      }
+      weeks.push({ weekNum: w+1, phase, phaseLabel, days });
+    }
+    return { goalDistKm, raceDate, daysPerWeek, generatedAt: new Date().toISOString(), totalWeeks, weeks };
+  }
+
+  function renderPlan(plan){
+    els.planContent.innerHTML = '';
+    const todayStr = new Date().toISOString().slice(0,10);
+    plan.weeks.forEach(week => {
+      const wrap = document.createElement('div');
+      wrap.className = 'plan-week';
+      const title = document.createElement('div');
+      title.className = 'plan-week-title';
+      title.innerHTML = `<span>${week.weekNum}주차</span><span class="plan-phase-badge">${week.phaseLabel}</span>`;
+      wrap.appendChild(title);
+      const daysWrap = document.createElement('div');
+      daysWrap.className = 'plan-days';
+      week.days.forEach(day => {
+        const el = document.createElement('div');
+        el.className = `plan-day type-${day.type}` + (day.date === todayStr ? ' today' : '');
+        const shortLabel = day.type==='rest' ? '휴식' : day.label.replace(/^[가-힣]+\s?/,'').replace('분','m') || day.label;
+        el.innerHTML = `<span class="dn">${day.dayName}</span><span class="dt">${shortLabel}</span>`;
+        daysWrap.appendChild(el);
+      });
+      wrap.appendChild(daysWrap);
+      els.planContent.appendChild(wrap);
+    });
+  }
+
+  function checkTodayWorkout(){
+    const plan = loadPlan();
+    if(!plan){ els.todayWorkoutCard.style.display = 'none'; return; }
+    const todayStr = new Date().toISOString().slice(0,10);
+    let todayDay = null;
+    for(const week of plan.weeks){
+      const found = week.days.find(d => d.date === todayStr);
+      if(found){ todayDay = found; break; }
+    }
+    if(!todayDay || todayDay.type === 'rest'){
+      els.todayWorkoutCard.style.display = 'none';
+      return;
+    }
+    els.todayWorkoutCard.style.display = 'flex';
+    els.twTitle.textContent = todayDay.type === 'race' ? '🏁 오늘은 대회일입니다!' : todayDay.label;
+    if(todayDay.paceZone && zonePaces[todayDay.paceZone]){
+      els.twDetail.textContent = `${todayDay.paceZone}페이스 ${fmtPace(zonePaces[todayDay.paceZone])}/km 기준`;
+    } else {
+      els.twDetail.textContent = todayDay.type === 'race' ? '완주 화이팅!' : '';
+    }
+    els.startTodayWorkoutBtn.dataset.zone = todayDay.paceZone || '';
+    els.startTodayWorkoutBtn.dataset.duration = todayDay.durationMin || '';
+  }
+
+
+  // ── 음성 설정 (선택한 목소리/속도/음높이를 localStorage에 저장) ──
+  let selectedVoice = null;
+  let voiceRate = parseFloat(localStorage.getItem('pacer_voice_rate') || '1.02');
+  let voicePitch = parseFloat(localStorage.getItem('pacer_voice_pitch') || '1.0');
+  const SELECTED_VOICE_KEY = 'pacer_voice_uri';
+
+  function populateVoiceList(){
+    const voices = window.speechSynthesis.getVoices();
+    if(!voices.length) return;
+    const savedURI = localStorage.getItem(SELECTED_VOICE_KEY) || '';
+    // 한국어 음성 우선 표시, 없으면 전체 표시
+    const koVoices = voices.filter(v => v.lang && v.lang.toLowerCase().startsWith('ko'));
+    const list = koVoices.length ? koVoices : voices;
+
+    els.voiceSelect.innerHTML = '<option value="">기본 음성</option>';
+    list.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v.voiceURI;
+      opt.textContent = `${v.name} (${v.lang})`;
+      if(v.voiceURI === savedURI) opt.selected = true;
+      els.voiceSelect.appendChild(opt);
+    });
+
+    if(savedURI){
+      selectedVoice = list.find(v => v.voiceURI === savedURI) || null;
+    }
+  }
+  if('speechSynthesis' in window){
+    populateVoiceList();
+    window.speechSynthesis.onvoiceschanged = populateVoiceList;
+  }
+
+  const RING_CIRC = 2 * Math.PI * 88;
+
+  let watchId = null;
+  let running = false;
+  let startTime = null;
+  let timerInterval = null;
+
+  let totalDistanceM = 0;
+  let lastPos = null;          // {lat, lon, alt, t}
+  let recentPoints = [];       // rolling window for smoothed pace: {t, distM}
+  let lastVoiceAt = 0;
+  let lastKmAnnounced = 0;
+  let slopeState = 'flat';     // 'up' | 'down' | 'flat'
+  let slopeSince = 0;
+  let altBuffer = [];          // {distM, alt}
+
+  const VOICE_MIN_GAP_MS = 20000; // 페이스 경고는 최소 20초 간격
+  const PACE_SLOW_THRESHOLD_S = 12; // 목표보다 12초/km 이상 느리면 경고
+  const PACE_FAST_THRESHOLD_S = 12; // 목표보다 12초/km 이상 빠르면 안내
+  const SLOPE_GRADE_THRESHOLD = 0.03; // 3% 이상 기울기면 경사로 판단
+  const SLOPE_WINDOW_M = 40;   // 최근 40m 구간으로 경사 계산
+  const ACCURACY_REJECT_M = 25;  // 이보다 오차가 크면 해당 측정값 자체를 버림
+  const ACCURACY_WARN_M = 15;    // 이보다 크면 UI에 "신호 약함" 표시
+  const ALT_ACCURACY_REJECT_M = 15; // 고도 오차가 이보다 크면 경사 계산에서 제외
+  const SLOPE_MIN_DIST_M = 25;   // 이보다 적게 이동했으면 경사 판단 자체를 건너뜀 (제자리 노이즈 방지)
+  let poorSignalStreak = 0;
+
+  function fmtPace(secPerKm){
+    if(!isFinite(secPerKm) || secPerKm <= 0) return '--:--';
+    const m = Math.floor(secPerKm / 60);
+    const s = Math.round(secPerKm % 60);
+    return `${m}:${String(s).padStart(2,'0')}`;
+  }
+
+  function fmtTime(totalSec){
+    const m = Math.floor(totalSec / 60);
+    const s = Math.floor(totalSec % 60);
+    return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  }
+
+  function targetPaceSec(){
+    const m = parseInt(els.targetMin.value || '6', 10);
+    const s = parseInt(els.targetSec.value || '0', 10);
+    return m * 60 + s;
+  }
+
+  function goalBasePaceSec(){
+    const dist = parseFloat(els.goalDist.value || '5');
+    const m = parseInt(els.goalMin.value || '40', 10);
+    const s = parseInt(els.goalSec.value || '0', 10);
+    if(!dist || dist <= 0) return NaN;
+    return (m * 60 + s) / dist;
+  }
+
+  // 진행률(0~1)에 따라 'start' | 'mid' | 'end' 구간 판정 (거리 기준 균등 3분할)
+  function segmentByProgress(progress){
+    if(progress < 1/3) return 'start';
+    if(progress < 2/3) return 'mid';
+    return 'end';
+  }
+
+  function goalSegmentPaceSec(base, segment){
+    const curve = LEVEL_CURVES[currentLevel];
+    const pct = curve[segment] || 0;
+    return base * (1 + pct / 100);
+  }
+
+  // 현재 모드에 맞는 목표 페이스(초/km) 반환. 목표완주 모드에서는 진행 거리 기준으로 구간별 페이스가 자동 변함
+  function currentTargetPaceSec(){
+    if(currentMode === 'training'){
+      return targetPaceSec();
+    }
+    if(currentMode === 'interval'){
+      return NaN; // 인터벌 모드는 페이스 목표가 아니라 시간 기반이라 링 표시 제외
+    }
+    const base = goalBasePaceSec();
+    if(!isFinite(base)) return NaN;
+    const dist = parseFloat(els.goalDist.value || '5');
+    const progress = dist > 0 ? Math.min(1, (totalDistanceM/1000) / dist) : 0;
+    const segment = segmentByProgress(progress);
+    return goalSegmentPaceSec(base, segment);
+  }
+
+  function updateGoalDerived(){
+    const base = goalBasePaceSec();
+    if(!isFinite(base) || base <= 0){
+      els.goalDerived.innerHTML = '평균 페이스 <b>--:--</b>/km';
+      return;
+    }
+    const startP = goalSegmentPaceSec(base, 'start');
+    const endP = goalSegmentPaceSec(base, 'end');
+    els.goalDerived.innerHTML = `평균 페이스 <b>${fmtPace(base)}</b>/km · 초반 <b>${fmtPace(startP)}</b> · 후반 <b>${fmtPace(endP)}</b>`;
+  }
+
+  function setMode(mode){
+    currentMode = mode;
+    els.tabTraining.classList.toggle('active', mode === 'training');
+    els.tabGoal.classList.toggle('active', mode === 'goal');
+    els.tabInterval.classList.toggle('active', mode === 'interval');
+    els.trainingPanel.style.display = mode === 'training' ? 'flex' : 'none';
+    els.goalPanel.style.display = mode === 'goal' ? 'flex' : 'none';
+    els.intervalPanel.style.display = mode === 'interval' ? 'flex' : 'none';
+    els.intervalDisplay.style.display = (mode === 'interval' && running) ? 'flex' : 'none';
+    lastSegment = null;
+    if(mode === 'goal') updateGoalDerived();
+  }
+
+  function setLevel(level){
+    currentLevel = level;
+    [...els.levelGroup.children].forEach(btn => btn.classList.toggle('active', btn.dataset.level === level));
+    updateGoalDerived();
+  }
+
+  function maybeAnnounceSegmentChange(){
+    if(currentMode !== 'goal' || !running) return;
+    const dist = parseFloat(els.goalDist.value || '5');
+    if(!dist || dist <= 0) return;
+    const progress = Math.min(1, (totalDistanceM/1000) / dist);
+    const segment = segmentByProgress(progress);
+    if(segment !== lastSegment){
+      lastSegment = segment;
+      const label = LEVEL_CURVES[currentLevel].labels[segment];
+      els.segmentBadge.textContent = label;
+      els.segmentBadge.classList.add('show');
+      speak(label.replace(/·/g, ','));
+      addLog(label, 'voice');
+    }
+  }
+
+  // ── 인터벌 모드 ──
+  function inputSec(minEl, secEl){
+    const m = parseInt(minEl.value || '0', 10);
+    const s = parseInt(secEl.value || '0', 10);
+    return Math.max(1, m * 60 + s);
+  }
+
+  function updateIntervalUI(){
+    const totalForPhase = intervalPhase === 'run' ? inputSec(els.runMin, els.runSec) : inputSec(els.walkMin, els.walkSec);
+    els.intervalDisplay.classList.remove('phase-run', 'phase-walk');
+    els.intervalDisplay.classList.add(intervalPhase === 'run' ? 'phase-run' : 'phase-walk');
+    els.phaseLabel.textContent = intervalPhase === 'run' ? '🏃 뛰기' : '🚶 걷기';
+    els.intervalCountdown.textContent = fmtTime(intervalRemainingSec);
+    const ratio = totalForPhase > 0 ? Math.max(0, intervalRemainingSec / totalForPhase) : 0;
+    els.intervalBarFill.style.width = (ratio * 100).toFixed(1) + '%';
+    const total = els.unlimitedToggle.checked ? '∞' : (els.cycleCount.value || '1');
+    els.cycleInfo.textContent = `${intervalCycleDone + 1} / ${total} 회차`;
+  }
+
+  function startIntervalTimer(){
+    intervalPhase = 'run';
+    intervalRemainingSec = inputSec(els.runMin, els.runSec);
+    intervalCycleDone = 0;
+    els.intervalDisplay.style.display = 'flex';
+    updateIntervalUI();
+    speak(`인터벌 러닝을 시작합니다. 먼저 ${fmtTime(intervalRemainingSec)} 동안 뛰세요.`);
+    addLog(`인터벌 시작 — 뛰기 ${fmtTime(inputSec(els.runMin, els.runSec))} / 걷기 ${fmtTime(inputSec(els.walkMin, els.walkSec))}`);
+    if(intervalTimerId) clearInterval(intervalTimerId);
+    intervalTimerId = setInterval(intervalTick, 1000);
+  }
+
+  function intervalTick(){
+    intervalRemainingSec--;
+    if(intervalRemainingSec <= 0){
+      if(intervalPhase === 'run'){
+        intervalPhase = 'walk';
+        intervalRemainingSec = inputSec(els.walkMin, els.walkSec);
+        speak('걷기 구간입니다. 호흡을 가다듬으세요.');
+        addLog('🚶 걷기 구간 시작', 'voice');
+      } else {
+        intervalCycleDone++;
+        const totalCycles = els.unlimitedToggle.checked ? Infinity : parseInt(els.cycleCount.value || '1', 10);
+        if(intervalCycleDone >= totalCycles){
+          speak(`인터벌 러닝 완료! 총 ${intervalCycleDone}회차를 마쳤습니다. 수고하셨습니다.`);
+          addLog(`인터벌 전체 완료 — ${intervalCycleDone}회차`, 'voice');
+          stop();
+          return;
+        }
+        intervalPhase = 'run';
+        intervalRemainingSec = inputSec(els.runMin, els.runSec);
+        speak('다시 뛸 시간입니다. 페이스를 올리세요.');
+        addLog(`🏃 뛰기 구간 시작 (${intervalCycleDone + 1}회차)`, 'voice');
+      }
+    } else if(intervalRemainingSec === 3){
+      speak('3초 후 전환입니다.');
+    }
+    updateIntervalUI();
+  }
+
+  function stopIntervalTimer(){
+    if(intervalTimerId){ clearInterval(intervalTimerId); intervalTimerId = null; }
+    els.intervalDisplay.style.display = 'none';
+  }
+
+  function haversine(lat1, lon1, lat2, lon2){
+    const R = 6371000;
+    const toRad = (d) => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  function addLog(text, cls){
+    const item = document.createElement('div');
+    item.className = 'log-item' + (cls ? ' ' + cls : '');
+    const now = new Date();
+    const t = now.toTimeString().slice(0,8);
+    item.innerHTML = `<span class="t">${t}</span><span>${text}</span>`;
+    els.log.prepend(item);
+    while(els.log.children.length > 30) els.log.removeChild(els.log.lastChild);
+  }
+
+  function speak(text){
+    if(!('speechSynthesis' in window)) { addLog('(TTS 미지원 브라우저) ' + text, 'voice'); return; }
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'ko-KR';
+    u.rate = voiceRate;
+    u.pitch = voicePitch;
+    if(selectedVoice) u.voice = selectedVoice;
+    window.speechSynthesis.speak(u);
+    addLog('🔊 ' + text, 'voice');
+  }
+
+  function updateRing(curSec, tgtSec){
+    // 링: 목표페이스 대비 얼마나 근접한지를 진행률로 표시 (0~100%, 과속/과속 모두 중앙을 100%로)
+    let ratio;
+    if(!isFinite(curSec) || curSec <= 0){ ratio = 0; }
+    else {
+      const diff = Math.abs(curSec - tgtSec);
+      ratio = Math.max(0, 1 - diff / 60); // 60초 이상 벗어나면 0%
+    }
+    const offset = RING_CIRC * (1 - ratio);
+    els.ringFill.style.strokeDashoffset = offset;
+
+    const diff = curSec - tgtSec;
+    els.deltaBadge.classList.remove('slow','fast','even');
+    if(!isFinite(curSec) || curSec <= 0){
+      els.deltaBadge.textContent = '목표 대비 --';
+      els.deltaBadge.classList.add('even');
+      els.ringFill.style.stroke = 'var(--ink-dim)'; els.ringFill.style.color = 'var(--ink-dim)';
+    } else if(diff > 3){
+      els.deltaBadge.textContent = `목표보다 ${Math.round(diff)}초 느림`;
+      els.deltaBadge.classList.add('slow');
+      els.ringFill.style.stroke = 'var(--coral)'; els.ringFill.style.color = 'var(--coral)';
+    } else if(diff < -3){
+      els.deltaBadge.textContent = `목표보다 ${Math.round(-diff)}초 빠름`;
+      els.deltaBadge.classList.add('fast');
+      els.ringFill.style.stroke = 'var(--teal)'; els.ringFill.style.color = 'var(--teal)';
+    } else {
+      els.deltaBadge.textContent = '목표 페이스 유지 중';
+      els.deltaBadge.classList.add('even');
+      els.ringFill.style.stroke = 'var(--teal)'; els.ringFill.style.color = 'var(--teal)';
+    }
+  }
+
+  function evaluatePaceAndMaybeSpeak(curSec){
+    const tgt = currentTargetPaceSec();
+    updateRing(curSec, tgt);
+    maybeAnnounceSegmentChange();
+    if(!isFinite(curSec) || curSec <= 0 || !isFinite(tgt)) return;
+
+    const now = Date.now();
+    if(now - lastVoiceAt < VOICE_MIN_GAP_MS) return;
+
+    const diff = curSec - tgt; // 양수 = 느림
+    if(diff >= PACE_SLOW_THRESHOLD_S){
+      if(appFlow === 'race'){
+        speak('페이스가 목표보다 느립니다! 조금 더 힘내야 목표 기록을 맞출 수 있어요.');
+      } else {
+        speak('페이스가 목표보다 느립니다. 조금 더 올려보세요.');
+      }
+      lastVoiceAt = now;
+    } else if(diff <= -PACE_FAST_THRESHOLD_S){
+      if(appFlow === 'race'){
+        speak('지금 너무 빠릅니다! 초반에 힘을 아껴야 후반에 무너지지 않아요.');
+      } else {
+        speak('목표보다 빠릅니다. 페이스를 살짝 낮춰도 좋아요.');
+      }
+      lastVoiceAt = now;
+    }
+  }
+
+  function evaluateSlope(){
+    if(altBuffer.length < 2) return;
+    const last = altBuffer[altBuffer.length - 1];
+    // SLOPE_WINDOW_M 이전 지점 찾기
+    let ref = altBuffer[0];
+    for(let i = altBuffer.length - 1; i >= 0; i--){
+      if(last.distM - altBuffer[i].distM >= SLOPE_WINDOW_M){ ref = altBuffer[i]; break; }
+      ref = altBuffer[i];
+    }
+    const distDelta = last.distM - ref.distM;
+    if(distDelta < SLOPE_MIN_DIST_M) return; // 표본 부족 — 제자리 노이즈로 인한 오탐 방지
+
+    const altDelta = last.alt - ref.alt;
+    if(altDelta == null || isNaN(altDelta)) return;
+    const grade = altDelta / distDelta;
+
+    let newState = 'flat';
+    if(grade >= SLOPE_GRADE_THRESHOLD) newState = 'up';
+    else if(grade <= -SLOPE_GRADE_THRESHOLD) newState = 'down';
+
+    if(newState !== slopeState){
+      slopeState = newState;
+      if(newState === 'up'){
+        els.slopeBadge.textContent = '▲ 오르막 구간 감지';
+        els.slopeBadge.classList.add('show');
+        speak('오르막 구간입니다. 페이스보다 힘 조절에 집중하세요.');
+        addLog('오르막 구간 진입 (경사 약 ' + (grade*100).toFixed(1) + '%)', 'slope');
+      } else if(newState === 'down'){
+        els.slopeBadge.textContent = '▼ 내리막 구간 감지';
+        els.slopeBadge.classList.add('show');
+        speak('내리막 구간입니다. 무릎에 무리가 가지 않게 보폭을 조절하세요.');
+        addLog('내리막 구간 진입 (경사 약 ' + (grade*100).toFixed(1) + '%)', 'slope');
+      } else {
+        els.slopeBadge.classList.remove('show');
+        addLog('평지 구간으로 복귀', 'slope');
+      }
+    }
+  }
+
+  function onPosition(pos){
+    const { latitude, longitude, altitude, accuracy } = pos.coords;
+    const t = pos.timestamp;
+
+    els.gpsStatus.classList.add('live');
+
+    // 오차가 너무 큰 측정값은 통째로 버림 (거리/페이스 계산에 반영 안 함)
+    if(accuracy != null && accuracy > ACCURACY_REJECT_M){
+      poorSignalStreak++;
+      els.gpsStatusText.textContent = `GPS 신호 약함 (±${Math.round(accuracy)}m)`;
+      els.gpsStatus.classList.remove('live');
+      if(poorSignalStreak === 1 || poorSignalStreak % 10 === 0){
+        addLog(`GPS 신호가 약해 이번 측정값(±${Math.round(accuracy)}m)은 건너뜁니다.`, 'slope');
+      }
+      return; // lastPos를 갱신하지 않아 다음 정상 측정값과 비교 가능
+    }
+    poorSignalStreak = 0;
+    els.gpsStatusText.textContent = accuracy > ACCURACY_WARN_M
+      ? `GPS 정확도 ±${Math.round(accuracy)}m (약함)`
+      : `GPS 정확도 ±${Math.round(accuracy || 0)}m`;
+
+    if(lastPos){
+      const d = haversine(lastPos.lat, lastPos.lon, latitude, longitude);
+      // GPS 튐 방지: 너무 짧은 시간에 비정상적으로 큰 이동은 무시
+      const dt = (t - lastPos.t) / 1000;
+      if(dt > 0 && d / dt < 8){ // 8m/s(=3분/km 페이스) 초과 이동은 노이즈로 간주
+        totalDistanceM += d;
+        recentPoints.push({ t, distM: totalDistanceM });
+        // 최근 20초 윈도우만 유지 → 현재 페이스 스무딩
+        const cutoff = t - 20000;
+        recentPoints = recentPoints.filter(p => p.t >= cutoff);
+
+        // 고도 정확도(altitudeAccuracy)가 나쁘거나 없으면 경사 계산에서 제외 (실내/정지 상태 오탐 방지)
+        const altAcc = pos.coords.altitudeAccuracy;
+        const altTrustworthy = altitude != null && (altAcc == null || altAcc <= ALT_ACCURACY_REJECT_M);
+        if(altTrustworthy){
+          altBuffer.push({ distM: totalDistanceM, alt: altitude });
+          if(altBuffer.length > 200) altBuffer.shift();
+          evaluateSlope();
+        }
+      }
+    }
+    lastPos = { lat: latitude, lon: longitude, alt: altitude, t };
+    updateMap(latitude, longitude);
+
+    // 현재 페이스(초/km) 계산: 최근 윈도우 구간 거리/시간
+    let curPaceSec = NaN;
+    if(recentPoints.length >= 2){
+      const first = recentPoints[0];
+      const last = recentPoints[recentPoints.length - 1];
+      const dm = last.distM - first.distM;
+      const dtSec = (last.t - first.t) / 1000;
+      if(dm > 3 && dtSec > 0){
+        curPaceSec = (dtSec / dm) * 1000;
+      }
+    }
+    els.curPace.textContent = fmtPace(curPaceSec);
+    evaluatePaceAndMaybeSpeak(curPaceSec);
+
+    // km 단위 안내 + 구간(세그먼트) 개인 최고기록 비교
+    const km = totalDistanceM / 1000;
+    if(Math.floor(km) > lastKmAnnounced){
+      lastKmAnnounced = Math.floor(km);
+      const elapsedSec = (Date.now() - startTime) / 1000;
+      const avgPace = elapsedSec / km;
+
+      // 이번 km 구간 스플릿 타임 계산 및 개인 최고기록(PR) 비교
+      const now = Date.now();
+      const splitSec = kmSplitStartTime ? (now - kmSplitStartTime) / 1000 : null;
+      kmSplitStartTime = now;
+      if(splitSec != null){
+        sessionSplits.push({ km: lastKmAnnounced, sec: splitSec });
+        const segments = loadSegmentPR();
+        const key = String(lastKmAnnounced);
+        const prevPR = segments[key];
+        if(prevPR == null){
+          segments[key] = splitSec;
+          saveSegmentPR(segments);
+          updateSegmentNote();
+          addLog(`${lastKmAnnounced}km 구간 기록 최초 저장: ${fmtPace(splitSec)}`, 'voice');
+        } else if(splitSec < prevPR){
+          const diff = prevPR - splitSec;
+          segments[key] = splitSec;
+          saveSegmentPR(segments);
+          updateSegmentNote();
+          speak(`${lastKmAnnounced}킬로미터 구간 신기록입니다! 이전보다 ${Math.round(diff)}초 빨라요.`);
+          addLog(`🏆 ${lastKmAnnounced}km 구간 신기록 (${fmtPace(splitSec)}, 이전보다 ${Math.round(diff)}초 단축)`, 'voice');
+        } else {
+          const diff = splitSec - prevPR;
+          speak(`${lastKmAnnounced}킬로미터 구간, 최고기록보다 ${Math.round(diff)}초 느립니다.`);
+          addLog(`${lastKmAnnounced}km 구간 (${fmtPace(splitSec)}, 최고기록보다 ${Math.round(diff)}초 느림)`, 'slope');
+        }
+      }
+
+      speak(`${lastKmAnnounced}킬로미터 통과. 평균 페이스 ${fmtPace(avgPace)}.`);
+    }
+
+    els.statDist.textContent = (totalDistanceM/1000).toFixed(2) + ' km';
+  }
+
+  function onPositionError(err){
+    els.gpsStatus.classList.remove('live');
+    els.gpsStatusText.textContent = 'GPS 오류: ' + err.message;
+    addLog('GPS 오류 — ' + err.message, 'slope');
+  }
+
+  function tick(){
+    if(!running) return;
+    const elapsedSec = (Date.now() - startTime) / 1000;
+    els.statTime.textContent = fmtTime(elapsedSec);
+    const km = totalDistanceM / 1000;
+    if(km > 0.01){
+      els.statAvg.textContent = fmtPace(elapsedSec / km);
+    }
+  }
+
+  // ══════════════ 히스토리 / 통계 ══════════════
+  function dateOnly(iso){ return iso.slice(0,10); }
+
+  function computeStreak(list){
+    if(!list.length) return 0;
+    const days = [...new Set(list.map(s => dateOnly(s.date)))].sort().reverse();
+    let streak = 0;
+    let cursor = new Date();
+    for(let i=0;i<days.length;i++){
+      const expected = new Date(cursor); expected.setDate(expected.getDate() - streak);
+      const expectedStr = expected.toISOString().slice(0,10);
+      if(days[i] === expectedStr){ streak++; }
+      else if(i===0 && days[i] !== new Date().toISOString().slice(0,10)) { break; }
+      else break;
+    }
+    return streak;
+  }
+
+  function renderHistory(){
+    const list = loadHistory();
+    els.totalRunsStat.textContent = list.length;
+    els.streakStat.textContent = computeStreak(list);
+    const weekAgo = Date.now() - 7*24*60*60*1000;
+    const weekDist = list.filter(s => new Date(s.date).getTime() >= weekAgo)
+      .reduce((sum,s) => sum + s.distKm, 0);
+    els.weekDistStat.textContent = weekDist.toFixed(1);
+
+    if(!list.length){
+      els.historyList.innerHTML = '<div class="empty-hint">아직 기록이 없어요.<br>첫 러닝을 시작해보세요!</div>';
+      return;
+    }
+    els.historyList.innerHTML = list.map(s => {
+      const d = new Date(s.date);
+      const dstr = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+      return `<div class="history-item"><div><div class="m">${s.distKm.toFixed(2)}km · ${fmtTime(s.timeSec)}</div><div class="d">${dstr} · ${s.modeLabel||''}</div></div><div class="m" style="color:var(--teal)">${fmtPace(s.avgPaceSec)}/km</div></div>`;
+    }).join('');
+  }
+
+  // ══════════════ 종료 후 요약 ══════════════
+  function showSummary(session){
+    els.sumDist.textContent = session.distKm.toFixed(2);
+    els.sumTime.textContent = fmtTime(session.timeSec);
+    els.sumPace.textContent = fmtPace(session.avgPaceSec) + '/km';
+
+    els.splitChart.innerHTML = '';
+    if(session.splits && session.splits.length){
+      const paces = session.splits.map(s => s.sec);
+      const minPace = Math.min(...paces), maxPace = Math.max(...paces);
+      session.splits.forEach(sp => {
+        const range = (maxPace - minPace) || 1;
+        // 페이스가 빠를수록(숫자가 작을수록) 막대가 높게
+        const heightPct = 30 + (1 - (sp.sec - minPace)/range) * 70;
+        const bar = document.createElement('div');
+        bar.className = 'split-bar';
+        bar.style.height = heightPct + '%';
+        bar.innerHTML = `<span class="lbl">${sp.km}km</span>`;
+        els.splitChart.appendChild(bar);
+      });
+    } else {
+      els.splitChart.innerHTML = '<div class="empty-hint" style="padding:20px;">1km 미만 러닝은 구간 차트가 표시되지 않아요.</div>';
+    }
+
+    els.shareCanvas.style.display = 'none';
+    els.summaryOverlay.classList.add('show');
+  }
+
+  function closeSummary(){ els.summaryOverlay.classList.remove('show'); }
+
+  // ══════════════ SNS 공유카드 ══════════════
+  function generateShareCard(session){
+    const c = els.shareCanvas;
+    const ctx = c.getContext('2d');
+    const W = c.width, H = c.height;
+
+    const grad = ctx.createLinearGradient(0,0,0,H);
+    grad.addColorStop(0, '#0A0E16');
+    grad.addColorStop(1, '#10151F');
+    ctx.fillStyle = grad; ctx.fillRect(0,0,W,H);
+
+    ctx.fillStyle = 'rgba(45,212,191,0.15)';
+    ctx.beginPath(); ctx.arc(W*0.1, H*0.05, 220, 0, Math.PI*2); ctx.fill();
+
+    ctx.fillStyle = '#7C879B';
+    ctx.font = '24px sans-serif';
+    ctx.fillText('준썰 · 러닝 프로토타입', 50, 90);
+
+    ctx.fillStyle = '#2DD4BF';
+    ctx.font = 'bold 56px sans-serif';
+    ctx.fillText('PACER', 50, 160);
+
+    const d = new Date(session.date);
+    ctx.fillStyle = '#7C879B';
+    ctx.font = '22px sans-serif';
+    ctx.fillText(`${d.getFullYear()}.${d.getMonth()+1}.${d.getDate()} 러닝 기록`, 50, 220);
+
+    function stat(label, value, y, color){
+      ctx.fillStyle = '#7C879B';
+      ctx.font = '20px sans-serif';
+      ctx.fillText(label, 50, y);
+      ctx.fillStyle = color;
+      ctx.font = 'bold 72px sans-serif';
+      ctx.fillText(value, 50, y+70);
+    }
+    stat('거리', session.distKm.toFixed(2) + ' km', 320, '#22D3EE');
+    stat('시간', fmtTime(session.timeSec), 470, '#A78BFA');
+    stat('평균 페이스', fmtPace(session.avgPaceSec) + ' /km', 620, '#2DD4BF');
+
+    ctx.strokeStyle = '#212B3B';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(50, H-60); ctx.lineTo(W-50, H-60); ctx.stroke();
+    ctx.fillStyle = '#7C879B';
+    ctx.font = '18px sans-serif';
+    ctx.fillText('#러닝스타그램  #PACER  #러닝글라스', 50, H-25);
+
+    c.style.display = 'block';
+  }
+
+  async function shareOrDownloadCard(){
+    els.shareCanvas.toBlob(async (blob) => {
+      const file = new File([blob], 'pacer-run.png', { type: 'image/png' });
+      if(navigator.share && navigator.canShare && navigator.canShare({ files:[file] })){
+        try {
+          await navigator.share({ files:[file], title:'PACER 러닝 기록' });
+          return;
+        } catch(e){ /* 사용자가 취소한 경우 등 - 다운로드로 폴백 */ }
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'pacer-run.png';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 3000);
+    }, 'image/png');
+  }
+
+  // ══════════════ 동작 센서 권한 (iOS) ══════════════
+  async function requestMotionPermission(){
+    if(typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function'){
+      try {
+        const res = await DeviceMotionEvent.requestPermission();
+        motionPermGranted = (res === 'granted');
+      } catch(e){ motionPermGranted = false; }
+    } else {
+      motionPermGranted = true; // 안드로이드 등 권한요청 불필요 브라우저
+    }
+    if(motionPermGranted){
+      window.addEventListener('devicemotion', onDeviceMotion);
+      addLog('동작 센서 권한이 허용됐습니다. 케이던스/낙상감지 사용 가능.');
+    } else {
+      addLog('동작 센서 권한이 거부됐습니다. 케이던스/낙상감지를 쓸 수 없어요.', 'slope');
+    }
+    return motionPermGranted;
+  }
+
+  // ══════════════ 케이던스 + 낙상감지 (가속도계 공용 처리) ══════════════
+  function onDeviceMotion(e){
+    const acc = e.accelerationIncludingGravity || e.acceleration;
+    if(!acc || acc.x == null) return;
+    const mag = Math.sqrt((acc.x||0)**2 + (acc.y||0)**2 + (acc.z||0)**2);
+    const now = Date.now();
+
+    // ── 케이던스: 걸음(피크) 감지 ──
+    if(running && cadenceEnabled){
+      const delta = mag - lastAccelMag;
+      if(delta > 3 && (now - lastStepPeakTime) > 250){ // 250ms = 최대 240spm 제한
+        lastStepPeakTime = now;
+        stepTimestamps.push(now);
+        stepTimestamps = stepTimestamps.filter(t => now - t <= 8000); // 최근 8초 윈도우
+        if(stepTimestamps.length >= 4){
+          currentCadenceSpm = Math.round((stepTimestamps.length / 8) * 60);
+          els.statCadence.textContent = currentCadenceSpm + ' spm';
+          if(currentCadenceSpm < CADENCE_TARGET_MIN && now - lastCadenceVoiceAt > 25000){
+            lastCadenceVoiceAt = now;
+            speak('케이던스가 낮아요. 보폭을 좁히고 더 빠르게 디뎌보세요.');
+          }
+        }
+      }
+    }
+
+    // ── 낙상 감지 ──
+    if(fallDetectEnabled && !els.sosOverlay.classList.contains('show')){
+      if(mag > IMPACT_THRESHOLD){
+        impactDetectedAt = now;
+        stillnessStart = 0;
+      }
+      if(impactDetectedAt && now - impactDetectedAt < 6000){
+        if(Math.abs(mag - 9.8) < STILLNESS_THRESHOLD){
+          if(!stillnessStart) stillnessStart = now;
+          else if(now - stillnessStart > STILLNESS_REQUIRED_MS){
+            impactDetectedAt = 0; stillnessStart = 0;
+            triggerSOS();
+          }
+        } else {
+          stillnessStart = 0;
+        }
+      }
+    }
+    lastAccelMag = mag;
+  }
+
+  function triggerSOS(){
+    sosCountdownSec = 15;
+    els.sosCountdown.textContent = sosCountdownSec;
+    els.sosOverlay.classList.add('show');
+    speak('충격이 감지됐습니다. 괜찮으시면 취소를 눌러주세요.');
+    sosTimerId = setInterval(() => {
+      sosCountdownSec--;
+      els.sosCountdown.textContent = sosCountdownSec;
+      if(sosCountdownSec <= 0){
+        clearInterval(sosTimerId);
+        sendSOS();
+      }
+    }, 1000);
+  }
+
+  function cancelSOS(){
+    if(sosTimerId) clearInterval(sosTimerId);
+    els.sosOverlay.classList.remove('show');
+    addLog('SOS 취소됨 — 안전 확인.');
+  }
+
+  function sendSOS(){
+    els.sosOverlay.classList.remove('show');
+    const contact = loadEmergencyContact();
+    let mapsLink = '위치 정보 없음';
+    if(lastPos){
+      mapsLink = `https://maps.google.com/?q=${lastPos.lat},${lastPos.lon}`;
+    }
+    const msg = encodeURIComponent(`[PACER 안전알림] 러닝 중 충격이 감지된 후 응답이 없습니다. 현재 위치: ${mapsLink}`);
+    addLog('🚨 SOS 발동 — 문자 앱을 엽니다. 전송을 눌러 완료해주세요.', 'slope');
+    const smsUri = contact ? `sms:${contact}?body=${msg}` : `sms:?body=${msg}`;
+    window.location.href = smsUri;
+  }
+
+  function start(){
+    if(!('geolocation' in navigator)){
+      addLog('이 브라우저는 위치 정보를 지원하지 않습니다.', 'slope');
+      return;
+    }
+    running = true;
+    startTime = Date.now();
+    kmSplitStartTime = startTime;
+    totalDistanceM = 0; lastPos = null; recentPoints = []; altBuffer = [];
+    lastKmAnnounced = 0; slopeState = 'flat'; lastVoiceAt = 0; poorSignalStreak = 0; lastSegment = null;
+    sessionSplits = []; stepTimestamps = []; currentCadenceSpm = null; lastCadenceVoiceAt = 0;
+    els.statCadence.textContent = '-- spm';
+    els.slopeBadge.classList.remove('show');
+    els.segmentBadge.classList.remove('show');
+    resetMap();
+    els.toggleBtn.textContent = '러닝 종료';
+    els.toggleBtn.classList.add('running');
+    els.permNote.style.display = 'none';
+
+    if(currentMode === 'interval'){
+      startIntervalTimer();
+    } else {
+      const startTgt = currentTargetPaceSec();
+      const modeLabel = currentMode === 'goal' ? `목표 완주 모드(${els.goalDist.value}km, ${LEVEL_CURVES[currentLevel] ? {beginner:'초급',intermediate:'중급',advanced:'고급'}[currentLevel] : ''})` : '페이스 훈련 모드';
+      addLog(`러닝 시작 — ${modeLabel}, 목표 페이스 ${fmtPace(startTgt)}`);
+      speak('러닝을 시작합니다. 목표 페이스는 ' + fmtPace(startTgt) + '입니다.');
+    }
+
+    watchId = navigator.geolocation.watchPosition(onPosition, onPositionError, {
+      enableHighAccuracy: true, maximumAge: 1000, timeout: 15000
+    });
+    timerInterval = setInterval(tick, 1000);
+  }
+
+  function stop(){
+    running = false;
+    if(watchId != null) navigator.geolocation.clearWatch(watchId);
+    if(timerInterval) clearInterval(timerInterval);
+    stopIntervalTimer();
+    els.toggleBtn.textContent = '러닝 시작';
+    els.toggleBtn.classList.remove('running');
+    els.gpsStatus.classList.remove('live');
+    els.gpsStatusText.textContent = 'GPS 대기';
+    const elapsedSec = (Date.now() - startTime) / 1000;
+    const km = totalDistanceM/1000;
+    addLog(`러닝 종료 — 총 ${km.toFixed(2)}km, ${fmtTime(elapsedSec)}`);
+    speak('러닝을 종료합니다. 수고하셨습니다.');
+
+    if(km >= 0.05){ // 너무 짧은 테스트성 러닝은 기록에서 제외
+      const modeLabelMap = { training:'페이스 훈련', goal:'목표 완주', interval:'인터벌' };
+      const session = {
+        date: new Date().toISOString(),
+        distKm: km,
+        timeSec: elapsedSec,
+        avgPaceSec: km > 0 ? elapsedSec / km : 0,
+        splits: sessionSplits.slice(),
+        modeLabel: modeLabelMap[currentMode] || ''
+      };
+      addHistorySession(session);
+      renderHistory();
+      showSummary(session);
+    }
+  }
+
+  els.toggleBtn.addEventListener('click', () => running ? stop() : start());
+  els.testVoiceBtn.addEventListener('click', () => speak('음성 코칭 테스트입니다. 블루투스 스피커로 잘 들리시나요?'));
+
+  els.tabTraining.addEventListener('click', () => setMode('training'));
+  els.tabGoal.addEventListener('click', () => setMode('goal'));
+  els.tabInterval.addEventListener('click', () => setMode('interval'));
+  [...els.levelGroup.children].forEach(btn => {
+    btn.addEventListener('click', () => setLevel(btn.dataset.level));
+  });
+  [els.goalDist, els.goalMin, els.goalSec].forEach(input => {
+    input.addEventListener('input', updateGoalDerived);
+  });
+  els.resetSegmentsBtn.addEventListener('click', () => {
+    if(confirm('저장된 모든 구간 최고기록을 삭제할까요?')){
+      saveSegmentPR({});
+      updateSegmentNote();
+      addLog('구간 기록을 초기화했습니다.');
+    }
+  });
+
+  els.voiceSelect.addEventListener('change', () => {
+    const uri = els.voiceSelect.value;
+    localStorage.setItem(SELECTED_VOICE_KEY, uri);
+    const voices = window.speechSynthesis.getVoices();
+    selectedVoice = voices.find(v => v.voiceURI === uri) || null;
+    speak('이 목소리로 안내해드릴게요.');
+  });
+  els.voiceRate.value = voiceRate;
+  els.rateLabel.textContent = voiceRate.toFixed(2) + 'x';
+  els.voiceRate.addEventListener('input', () => {
+    voiceRate = parseFloat(els.voiceRate.value);
+    els.rateLabel.textContent = voiceRate.toFixed(2) + 'x';
+    localStorage.setItem('pacer_voice_rate', voiceRate);
+  });
+  els.voicePitch.value = voicePitch;
+  els.pitchLabel.textContent = voicePitch.toFixed(2);
+  els.voicePitch.addEventListener('input', () => {
+    voicePitch = parseFloat(els.voicePitch.value);
+    els.pitchLabel.textContent = voicePitch.toFixed(2);
+    localStorage.setItem('pacer_voice_pitch', voicePitch);
+  });
+  els.voiceRate.addEventListener('change', () => speak('이 속도로 안내해드릴게요.'));
+  els.voicePitch.addEventListener('change', () => speak('이 음높이로 안내해드릴게요.'));
+
+  // ── 히스토리 오버레이 ──
+  els.historyBtn.addEventListener('click', () => { renderHistory(); els.historyOverlay.classList.add('show'); });
+  els.closeHistoryBtn.addEventListener('click', () => els.historyOverlay.classList.remove('show'));
+
+  // ── 요약 오버레이 ──
+  els.closeSummaryBtn.addEventListener('click', closeSummary);
+  els.closeSummaryBtn2.addEventListener('click', closeSummary);
+  els.makeShareCardBtn.addEventListener('click', () => {
+    const list = loadHistory();
+    if(!list.length) return;
+    generateShareCard(list[0]);
+    shareOrDownloadCard();
+  });
+
+  // ── 안전 설정 ──
+  els.emergencyContact.value = loadEmergencyContact();
+  els.emergencyContact.addEventListener('input', () => saveEmergencyContact(els.emergencyContact.value));
+
+  fallDetectEnabled = loadToggle('pacer_fall_detect', false);
+  cadenceEnabled = loadToggle('pacer_cadence', true);
+  els.fallDetectToggle.checked = fallDetectEnabled;
+  els.cadenceToggle.checked = cadenceEnabled;
+  els.fallDetectToggle.addEventListener('change', () => {
+    fallDetectEnabled = els.fallDetectToggle.checked;
+    saveToggle('pacer_fall_detect', fallDetectEnabled);
+    if(fallDetectEnabled && !motionPermGranted) requestMotionPermission();
+  });
+  els.cadenceToggle.addEventListener('change', () => {
+    cadenceEnabled = els.cadenceToggle.checked;
+    saveToggle('pacer_cadence', cadenceEnabled);
+    if(cadenceEnabled && !motionPermGranted) requestMotionPermission();
+  });
+  els.motionPermBtn.addEventListener('click', requestMotionPermission);
+  els.sosCancelBtn.addEventListener('click', cancelSOS);
+
+  // ── VDOT 훈련 존 ──
+  populateTimeSelects();
+  const savedRace = loadRecentRace();
+  if(savedRace){
+    els.raceDistInput.value = savedRace.dist;
+    els.raceTimeMin.value = Math.floor(savedRace.timeSec/60);
+    els.raceTimeSec.value = savedRace.timeSec%60;
+  }
+  recalcZones();
+  [els.raceDistInput, els.raceTimeMin, els.raceTimeSec].forEach(el => el.addEventListener('change', recalcZones));
+
+  els.zoneChips.addEventListener('click', (e) => {
+    const chip = e.target.closest('.zone-chip');
+    if(!chip || !zonePaces[chip.dataset.zone]) return;
+    [...els.zoneChips.children].forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    setMode('training');
+    const paceSec = Math.round(zonePaces[chip.dataset.zone]);
+    els.targetMin.value = Math.floor(paceSec/60);
+    els.targetSec.value = paceSec%60;
+    updateRing(NaN, currentTargetPaceSec());
+    addLog(`${chip.dataset.zone} 존 페이스(${fmtPace(paceSec)}/km)를 목표로 설정했습니다.`);
+  });
+
+  // ── 훈련 계획 ──
+  const today0 = new Date();
+  const defaultRace = new Date(today0); defaultRace.setDate(defaultRace.getDate() + 84); // 기본 12주 뒤
+  els.raceDateInput.value = defaultRace.toISOString().slice(0,10);
+  els.raceDateInput.min = new Date(today0.getTime()+86400000).toISOString().slice(0,10);
+
+  els.planBtn.addEventListener('click', () => {
+    els.planOverlay.classList.add('show');
+    const existing = loadPlan();
+    if(existing){
+      els.goalDistSelect.value = existing.goalDistKm;
+      els.raceDateInput.value = existing.raceDate;
+      els.daysPerWeekSelect.value = existing.daysPerWeek;
+      renderPlan(existing);
+    }
+  });
+  els.closePlanBtn.addEventListener('click', () => els.planOverlay.classList.remove('show'));
+
+  els.generatePlanBtn.addEventListener('click', () => {
+    if(!currentVDOT){
+      addLog('먼저 최근 레이스 기록을 입력해 훈련 존을 계산해주세요.', 'slope');
+    }
+    const goalDistKm = parseFloat(els.goalDistSelect.value);
+    const raceDate = els.raceDateInput.value;
+    const daysPerWeek = parseInt(els.daysPerWeekSelect.value, 10);
+    if(!raceDate){ addLog('대회 날짜를 선택해주세요.', 'slope'); return; }
+    const plan = generateTrainingPlan(goalDistKm, raceDate, daysPerWeek);
+    savePlan(plan);
+    renderPlan(plan);
+    checkTodayWorkout();
+    addLog(`훈련 계획 생성 완료 — 총 ${plan.totalWeeks}주 계획`);
+  });
+
+  els.startTodayWorkoutBtn.addEventListener('click', () => {
+    const zone = els.startTodayWorkoutBtn.dataset.zone;
+    if(zone && zonePaces[zone]){
+      setMode('training');
+      const paceSec = Math.round(zonePaces[zone]);
+      els.targetMin.value = Math.floor(paceSec/60);
+      els.targetSec.value = paceSec%60;
+      updateRing(NaN, currentTargetPaceSec());
+    }
+    if(!running) start();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+
+  checkTodayWorkout();
+
+  // ── 접이식 패널(음성/안전/훈련존) 토글 ──
+  document.querySelectorAll('.collapsible-header').forEach(header => {
+    header.addEventListener('click', () => {
+      const targetId = header.dataset.target;
+      const body = document.getElementById(targetId);
+      const arrow = header.querySelector('.collapsible-arrow');
+      const isOpen = body.classList.toggle('open');
+      if(arrow) arrow.classList.toggle('open', isOpen);
+    });
+  });
+
+  // ── 홈 화면: 훈련 / 대회 분기 ──
+  let appFlow = null;
+  function selectFlow(flow){
+    appFlow = flow;
+    els.homeOverlay.classList.remove('show');
+    els.homeBtn.style.display = 'inline-block';
+    if(flow === 'training'){
+      els.tabGoal.textContent = '오늘의 목표';
+      els.tabGoal.style.display = '';
+      els.modeTabsWrap.style.display = 'flex';
+      if(currentMode !== 'training' && currentMode !== 'goal' && currentMode !== 'interval') setMode('training');
+      els.headerEyebrow.textContent = '훈련 모드';
+    } else {
+      els.modeTabsWrap.style.display = 'none';
+      setMode('goal');
+      const plan = loadPlan();
+      if(plan){
+        els.goalDist.value = plan.goalDistKm;
+        updateGoalDerived();
+        const daysLeft = Math.ceil((new Date(plan.raceDate) - new Date()) / 86400000);
+        els.headerEyebrow.textContent = `대회 목표 · D-${daysLeft}`;
+        addLog(`저장된 대회 목표를 불러왔습니다 — ${plan.goalDistKm}km, D-${daysLeft}`);
+      } else {
+        els.headerEyebrow.textContent = '대회 목표 모드';
+        addLog('저장된 대회 목표가 없어요. 🎯 계획에서 먼저 목표를 등록해보세요.', 'slope');
+      }
+    }
+  }
+  els.homeTrainingCard.addEventListener('click', () => selectFlow('training'));
+  els.homeRaceCard.addEventListener('click', () => selectFlow('race'));
+  els.homeBtn.addEventListener('click', () => {
+    if(running){
+      addLog('러닝 중에는 홈으로 이동할 수 없어요. 먼저 종료해주세요.', 'slope');
+      return;
+    }
+    els.homeOverlay.classList.add('show');
+  });
+
+  // 안드로이드 등 권한요청 API가 없는 브라우저는 처음부터 자동 활성화 시도
+  if(typeof DeviceMotionEvent === 'undefined' || typeof DeviceMotionEvent.requestPermission !== 'function'){
+    if(cadenceEnabled || fallDetectEnabled) requestMotionPermission();
+  }
+
+  renderHistory();
+  updateSegmentNote();
+  updateRing(NaN, currentTargetPaceSec());
+})();
+</script>
+</body>
+</html>
